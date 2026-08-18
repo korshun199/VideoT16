@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.cache/
+models/*
+!models/.gitkeep
+recordings/
+snapshots/
+dataset/my_cat/images/raw/
+dataset/my_cat/images/raw_negative/
+dataset/my_cat/images/train/*.jpg
+dataset/my_cat/images/val/*.jpg
+dataset/my_cat/labels/train/*.txt
+dataset/my_cat/labels/val/*.txt
+runs/
+.env
