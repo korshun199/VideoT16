@@ -20,7 +20,7 @@ def open_source(value: str):
 def main() -> int:
     """Показывает поток и сохраняет кадр на Space."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", required=True, help="/dev/videoN, номер камеры или RTSP URL")
+    parser.add_argument("--source", default="/dev/video4", help="Источник камеры; по умолчанию Logitech Brio /dev/video4")
     parser.add_argument("--name", required=True, help="Имя предмета для каталога")
     parser.add_argument("--output", type=Path, default=Path("dataset/objects"))
     args = parser.parse_args()

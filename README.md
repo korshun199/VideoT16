@@ -92,12 +92,10 @@ python3 -m src.local_object_detection \
 
 ## Съёмка фотографий предметов
 
-Для съёмки с телефона, если он подключён как `/dev/videoN` или отдаёт RTSP-поток:
+Для съёмки предметов с Logitech Brio на компьютере:
 
 ```bash
-.venv/bin/python3 scripts/capture_object_photos.py \
-  --source /dev/video6 \
-  --name предмет_1
+./capture_brio.sh предмет_1
 ```
 
 Нажимай `Space` для сохранения фотографии, `q` или `Esc` для выхода. Фотографии будут в `dataset/objects/предмет_1/`.
