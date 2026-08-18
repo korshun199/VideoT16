@@ -13,5 +13,6 @@ dataset/my_cat/images/train/*.jpg
 dataset/my_cat/images/val/*.jpg
 dataset/my_cat/labels/train/*.txt
 dataset/my_cat/labels/val/*.txt
+dataset/objects/
 runs/
 .env
