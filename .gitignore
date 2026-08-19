@@ -8,6 +8,8 @@ models/*
 !models/fpv_drone_best.pt
 !models/fpv_drone_best.onnx
 !models/FPV_MODEL.md
+!models/military_vehicle_best.pt
+!models/MILITARY_MODEL.md
 recordings/
 snapshots/
 sounds/*.wav

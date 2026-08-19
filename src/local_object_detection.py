@@ -29,9 +29,33 @@ RUSSIAN_DRONE_LABELS = {
     "fixed-wing": "самолётный дрон",
 }
 
+RUSSIAN_MILITARY_LABELS = {
+    "armored_car": "бронемашина",
+    "car": "автомобиль",
+    "person": "человек",
+    "plane": "самолёт",
+    "rszo": "РСЗО",
+    "sau": "САУ",
+    "tank": "танк",
+    "trench": "окоп",
+    "truck": "грузовик",
+    "vehicle": "техника",
+}
+
 def parse_source(value: str) -> int | str:
     """Преобразует номер камеры в число, а URL оставляет строкой."""
     return int(value) if value.isdigit() else value
+
+
+def parse_resolution(value: str) -> tuple[int, int]:
+    """Преобразует разрешение вида 1920x1080 в ширину и высоту."""
+    try:
+        width, height = (int(part) for part in value.lower().split("x", 1))
+    except (ValueError, TypeError):
+        raise argparse.ArgumentTypeError("Разрешение должно быть в формате ШИРИНАxВЫСОТА")
+    if width < 1 or height < 1:
+        raise argparse.ArgumentTypeError("Ширина и высота должны быть положительными")
+    return width, height
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -40,15 +64,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source", default="logitech", help="logitech, номер камеры, /dev/videoN или RTSP URL")
     parser.add_argument("--model", default="models/yolov8n.pt", help="Путь к локальным весам YOLO")
     parser.add_argument("--labels", choices=("ru", "en"), default="ru", help="Язык подписей объектов")
+    parser.add_argument("--generic-label", action="store_true", help="Показывать для всех объектов подпись OBJECT")
     parser.add_argument("--confidence", type=float, default=0.35, help="Минимальная уверенность 0..1")
+    parser.add_argument("-p", "--percent", "--confidence-percent", dest="confidence_percent", type=float, help="Минимальная уверенность в процентах 0..100")
     parser.add_argument("--device", default="cpu", help="Устройство: cpu или auto для RKNN")
     parser.add_argument("--alert-wav", type=Path, help="Локальный WAV для сигнала обнаружения")
+    parser.add_argument("--alert-delay", type=float, default=3.0, help="Сколько секунд удерживать обнаружение до сигнала")
     parser.add_argument("--alert-cooldown", type=float, default=3.0, help="Пауза между сигналами в секундах")
     parser.add_argument("--output", type=Path, help="Путь записи обработанного видео")
     parser.add_argument("--snapshot-dir", type=Path, default=Path("snapshots"))
     parser.add_argument("--headless", action="store_true", help="Работать без окна предпросмотра")
     parser.add_argument("--window-width", type=int, default=1280, help="Ширина окна предпросмотра")
     parser.add_argument("--window-height", type=int, default=720, help="Высота окна предпросмотра")
+    parser.add_argument("--resolution", type=parse_resolution, help="Размер окна, например 1920x1080")
+    parser.add_argument("--fullscreen", action="store_true", help="Развернуть окно на весь экран")
+    parser.add_argument("--window-x", type=int, default=None, help="Положение окна по горизонтали")
+    parser.add_argument("--window-y", type=int, default=None, help="Положение окна по вертикали")
     parser.add_argument("--max-frames", type=int, default=0, help="Остановиться после N кадров; 0 — без лимита")
     parser.add_argument("--list-cameras", action="store_true", help="Проверить камеры 0..4")
     return parser
@@ -129,11 +160,59 @@ def play_alert(path: Path) -> subprocess.Popen[bytes] | None:
     return None
 
 
+def draw_detections(result, generic_label: bool = False):
+    """Рисует рамки и уверенность обнаружения в процентах."""
+    import cv2
+
+    annotated = result.plot(labels=False).copy()
+    for box in result.boxes:
+        x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+        class_id = int(box.cls[0])
+        confidence = float(box.conf[0])
+        name = "OBJECT" if generic_label else result.names[class_id]
+        label = f"{name} {confidence * 100:.0f}%"
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        text_y = max(y1 - 8, 20)
+        cv2.putText(
+            annotated,
+            label,
+            (x1, text_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 255, 0),
+            2,
+            cv2.LINE_AA,
+        )
+    return annotated
+
+
+def black_background(frame, target_width: int, target_height: int):
+    """Помещает кадр по центру чёрного холста без искажения пропорций."""
+    import numpy as np
+
+    frame_height, frame_width = frame.shape[:2]
+    scale = min(target_width / frame_width, target_height / frame_height)
+    image_width = max(1, int(frame_width * scale))
+    image_height = max(1, int(frame_height * scale))
+    import cv2
+
+    resized = cv2.resize(frame, (image_width, image_height), interpolation=cv2.INTER_AREA)
+    canvas = np.zeros((target_height, target_width, 3), dtype=frame.dtype)
+    left = (target_width - image_width) // 2
+    top = (target_height - image_height) // 2
+    canvas[top:top + resized.shape[0], left:left + resized.shape[1]] = resized
+    return canvas
+
+
 def run(args: argparse.Namespace) -> int:
     """Запускает захват, локальный инференс и отображение результата."""
     model_path = Path(args.model)
     if not model_path.is_file():
         raise FileNotFoundError(f"Локальная модель не найдена: {model_path}. Положите веса в этот путь.")
+    if args.confidence_percent is not None:
+        if not 0 < args.confidence_percent <= 100:
+            raise ValueError("--confidence-percent должен быть больше 0 и не больше 100")
+        args.confidence = args.confidence_percent / 100
     if not 0 < args.confidence <= 1:
         raise ValueError("--confidence должен быть больше 0 и не больше 1")
     if args.alert_cooldown < 0:
@@ -159,7 +238,9 @@ def run(args: argparse.Namespace) -> int:
             model.model.names = dict(enumerate(RUSSIAN_LABELS))
         else:
             model.model.names = {
-                index: RUSSIAN_DRONE_LABELS.get(str(name), str(name))
+                index: RUSSIAN_MILITARY_LABELS.get(
+                    str(name), RUSSIAN_DRONE_LABELS.get(str(name), str(name))
+                )
                 for index, name in names.items()
             }
     print("Модель загружена. Открываю камеру...", flush=True)
@@ -168,11 +249,27 @@ def run(args: argparse.Namespace) -> int:
         raise RuntimeError(f"Не удалось открыть источник камеры: {args.source}")
     if not args.headless:
         cv2.namedWindow("Локальное распознавание объектов", cv2.WINDOW_NORMAL)
+        if args.resolution:
+            args.window_width, args.window_height = args.resolution
         cv2.resizeWindow("Локальное распознавание объектов", args.window_width, args.window_height)
+        if args.window_x is not None or args.window_y is not None:
+            cv2.moveWindow(
+                "Локальное распознавание объектов",
+                args.window_x or 0,
+                args.window_y or 0,
+            )
+        if args.fullscreen:
+            cv2.setWindowProperty(
+                "Локальное распознавание объектов",
+                cv2.WND_PROP_FULLSCREEN,
+                cv2.WINDOW_FULLSCREEN,
+            )
 
     writer: cv2.VideoWriter | None = create_writer(args.output, capture) if args.output else None
     frame_number = 0
     last_alert_at = 0.0
+    detection_started_at: float | None = None
+    alert_sent_for_detection = False
     alert_process: subprocess.Popen[bytes] | None = None
     try:
         while args.max_frames <= 0 or frame_number < args.max_frames:
@@ -183,19 +280,35 @@ def run(args: argparse.Namespace) -> int:
             if args.device != "auto":
                 predict_args["device"] = args.device
             result = model.predict(frame, **predict_args)[0]
-            annotated = result.plot()
-            if args.alert_wav and len(result.boxes) > 0:
-                now = time.monotonic()
+            annotated = draw_detections(result, args.generic_label)
+            now = time.monotonic()
+            if len(result.boxes) > 0:
+                if detection_started_at is None:
+                    detection_started_at = now
+                    alert_sent_for_detection = False
+            else:
+                detection_started_at = None
+                alert_sent_for_detection = False
+
+            if args.alert_wav and detection_started_at is not None:
+                held_for = now - detection_started_at
                 process_finished = alert_process is None or alert_process.poll() is not None
-                if process_finished and now - last_alert_at >= args.alert_cooldown:
+                if (
+                    held_for >= args.alert_delay
+                    and not alert_sent_for_detection
+                    and process_finished
+                    and now - last_alert_at >= args.alert_cooldown
+                ):
                     alert_process = play_alert(args.alert_wav)
                     last_alert_at = now
+                    alert_sent_for_detection = True
             if writer:
                 writer.write(annotated)
             frame_number += 1
 
             if not args.headless:
-                cv2.imshow("Локальное распознавание объектов", annotated)
+                display_frame = black_background(annotated, args.window_width, args.window_height)
+                cv2.imshow("Локальное распознавание объектов", display_frame)
                 key = cv2.waitKey(1) & 0xFF
                 if key in (ord("q"), 27):
                     break
