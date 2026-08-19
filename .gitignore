@@ -5,6 +5,9 @@ __pycache__/
 .cache/
 models/*
 !models/.gitkeep
+!models/fpv_drone_best.pt
+!models/fpv_drone_best.onnx
+!models/FPV_MODEL.md
 recordings/
 snapshots/
 dataset/my_cat/images/raw/

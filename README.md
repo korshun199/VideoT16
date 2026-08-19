@@ -60,6 +60,40 @@ python3 -m src.local_object_detection --list-cameras
 
 Модель FPV хранится локально в `models/fpv_drone_best.pt` и запускается без облачного сервиса. Она содержит классы `квадрокоптер` и `самолётный дрон`. Если модель отсутствует, скачайте её отдельно с Hugging Face и положите в этот путь.
 
+## Подготовка для Orange Pi 5
+
+Orange Pi 5 использует Rockchip RK3588S. Для NPU модель нужно подготовить на этом компьютере с x86 Linux, а затем перенести на Orange Pi 5 в формате RKNN. Сам Orange Pi 5 для экспорта не используется.
+
+На компьютере установите экспортёр ONNX и выполните:
+
+```bash
+source .venv/bin/activate
+python3 -m pip install -r requirements-export.txt
+python3 scripts/export_orangepi5_onnx.py
+```
+
+Затем установите совместимый `rknn-toolkit2` в отдельное окружение x86 Linux и выполните:
+
+```bash
+python3 scripts/convert_onnx_to_rknn.py \
+  models/fpv_drone_best.onnx \
+  models/orangepi5/fpv_drone.rknn
+```
+
+Скопируйте на Orange Pi 5 проект, файл `models/orangepi5/fpv_drone.rknn` и установите runtime `rknn-toolkit-lite2` для RK3588. Запуск:
+
+```bash
+CAMERA_SOURCE=/dev/video0 ./run_fpv_orangepi5.sh
+```
+
+Если Logitech получила другой номер устройства:
+
+```bash
+CAMERA_SOURCE=/dev/video4 ./run_fpv_orangepi5.sh
+```
+
+`.pt` остаётся версией для компьютера, а `.rknn` — версией для NPU Orange Pi 5. Экспорт выполняйте на x86 Linux: официальная документация указывает, что экспорт RKNN на ARM-плате не поддерживается.
+
 Дополнительные параметры передаются в приложение:
 
 ```bash

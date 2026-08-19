@@ -38,6 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default="models/yolov8n.pt", help="Путь к локальным весам YOLO")
     parser.add_argument("--labels", choices=("ru", "en"), default="ru", help="Язык подписей объектов")
     parser.add_argument("--confidence", type=float, default=0.35, help="Минимальная уверенность 0..1")
+    parser.add_argument("--device", default="cpu", help="Устройство: cpu или auto для RKNN")
     parser.add_argument("--output", type=Path, help="Путь записи обработанного видео")
     parser.add_argument("--snapshot-dir", type=Path, default=Path("snapshots"))
     parser.add_argument("--headless", action="store_true", help="Работать без окна предпросмотра")
@@ -154,7 +155,10 @@ def run(args: argparse.Namespace) -> int:
             ok, frame = capture.read()
             if not ok:
                 raise RuntimeError("Камера не вернула кадр")
-            result = model.predict(frame, conf=args.confidence, device="cpu", verbose=False)[0]
+            predict_args = {"conf": args.confidence, "verbose": False}
+            if args.device != "auto":
+                predict_args["device"] = args.device
+            result = model.predict(frame, **predict_args)[0]
             annotated = result.plot()
             if writer:
                 writer.write(annotated)
