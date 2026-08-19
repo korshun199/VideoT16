@@ -21,6 +21,11 @@ RUSSIAN_LABELS = [
     "фен", "зубная щётка",
 ]
 
+RUSSIAN_DRONE_LABELS = {
+    "quadcopter": "квадрокоптер",
+    "fixed-wing": "самолётный дрон",
+}
+
 def parse_source(value: str) -> int | str:
     """Преобразует номер камеры в число, а URL оставляет строкой."""
     return int(value) if value.isdigit() else value
@@ -123,8 +128,17 @@ def run(args: argparse.Namespace) -> int:
 
     model = YOLO(str(model_path))
     if args.labels == "ru":
-        class_count = len(model.model.names)
-        model.model.names = {0: "Фипик"} if class_count == 1 else dict(enumerate(RUSSIAN_LABELS))
+        names = dict(model.model.names)
+        class_count = len(names)
+        if class_count == 1:
+            model.model.names = {0: "Фипик"}
+        elif class_count == len(RUSSIAN_LABELS):
+            model.model.names = dict(enumerate(RUSSIAN_LABELS))
+        else:
+            model.model.names = {
+                index: RUSSIAN_DRONE_LABELS.get(str(name), str(name))
+                for index, name in names.items()
+            }
     print("Модель загружена. Открываю камеру...", flush=True)
     capture = open_capture(resolve_source(parse_source(args.source)))
     if not capture.isOpened():
