@@ -9,6 +9,18 @@
 
 Источник: [TomSmail/drone-yolo-v1](https://huggingface.co/TomSmail/drone-yolo-v1).
 
+Ссылки для восстановления:
+
+- [Оригинальные веса `best.pt` на Hugging Face](https://huggingface.co/TomSmail/drone-yolo-v1/resolve/main/best.pt);
+- [Копия `.pt` в GitHub](https://raw.githubusercontent.com/korshun199/VideoT16/main/models/fpv_drone_best.pt);
+- [Копия `.onnx` в GitHub](https://raw.githubusercontent.com/korshun199/VideoT16/main/models/fpv_drone_best.onnx).
+
+Автоматическое восстановление с проверкой целостности:
+
+```bash
+./scripts/download_fpv_model.sh
+```
+
 Лицензия модели: CC BY 4.0. Перед коммерческим использованием проверьте условия лицензии источника.
 
 SHA-256:

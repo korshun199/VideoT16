@@ -60,6 +60,14 @@ python3 -m src.local_object_detection --list-cameras
 
 Модель FPV хранится локально в `models/fpv_drone_best.pt` и запускается без облачного сервиса. Она содержит классы `квадрокоптер` и `самолётный дрон`. Если модель отсутствует, скачайте её отдельно с Hugging Face и положите в этот путь.
 
+Если модель потерялась, восстановите её с оригинального источника и проверьте SHA-256:
+
+```bash
+./scripts/download_fpv_model.sh
+```
+
+Резервные ссылки: [оригинальный `best.pt` на Hugging Face](https://huggingface.co/TomSmail/drone-yolo-v1/resolve/main/best.pt), [копия `.pt` в GitHub](https://raw.githubusercontent.com/korshun199/VideoT16/main/models/fpv_drone_best.pt), [копия `.onnx` в GitHub](https://raw.githubusercontent.com/korshun199/VideoT16/main/models/fpv_drone_best.onnx).
+
 ## Подготовка для Orange Pi 5
 
 Orange Pi 5 использует Rockchip RK3588S. Для NPU модель нужно подготовить на этом компьютере с x86 Linux, а затем перенести на Orange Pi 5 в формате RKNN. Сам Orange Pi 5 для экспорта не используется.
