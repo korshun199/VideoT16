@@ -10,6 +10,7 @@ models/*
 !models/FPV_MODEL.md
 recordings/
 snapshots/
+sounds/*.wav
 dataset/my_cat/images/raw/
 dataset/my_cat/images/raw_negative/
 dataset/my_cat/images/train/*.jpg

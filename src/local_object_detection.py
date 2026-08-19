@@ -5,7 +5,10 @@ from __future__ import annotations
 import argparse
 import glob
 import os
+import shutil
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 RUSSIAN_LABELS = [
@@ -39,6 +42,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--labels", choices=("ru", "en"), default="ru", help="Язык подписей объектов")
     parser.add_argument("--confidence", type=float, default=0.35, help="Минимальная уверенность 0..1")
     parser.add_argument("--device", default="cpu", help="Устройство: cpu или auto для RKNN")
+    parser.add_argument("--alert-wav", type=Path, help="Локальный WAV для сигнала обнаружения")
+    parser.add_argument("--alert-cooldown", type=float, default=3.0, help="Пауза между сигналами в секундах")
     parser.add_argument("--output", type=Path, help="Путь записи обработанного видео")
     parser.add_argument("--snapshot-dir", type=Path, default=Path("snapshots"))
     parser.add_argument("--headless", action="store_true", help="Работать без окна предпросмотра")
@@ -111,6 +116,19 @@ def configure_local_caches() -> None:
     os.environ.setdefault("MPLCONFIGDIR", str((cache_dir / "matplotlib").resolve()))
 
 
+def play_alert(path: Path) -> subprocess.Popen[bytes] | None:
+    """Запускает WAV через доступный системный проигрыватель."""
+    players = (
+        ("paplay", ["paplay", str(path)]),
+        ("aplay", ["aplay", "-q", str(path)]),
+        ("ffplay", ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(path)]),
+    )
+    for name, command in players:
+        if shutil.which(name):
+            return subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return None
+
+
 def run(args: argparse.Namespace) -> int:
     """Запускает захват, локальный инференс и отображение результата."""
     model_path = Path(args.model)
@@ -118,6 +136,10 @@ def run(args: argparse.Namespace) -> int:
         raise FileNotFoundError(f"Локальная модель не найдена: {model_path}. Положите веса в этот путь.")
     if not 0 < args.confidence <= 1:
         raise ValueError("--confidence должен быть больше 0 и не больше 1")
+    if args.alert_cooldown < 0:
+        raise ValueError("--alert-cooldown не может быть отрицательным")
+    if args.alert_wav and not args.alert_wav.is_file():
+        raise FileNotFoundError(f"WAV-файл не найден: {args.alert_wav}")
 
     try:
         configure_local_caches()
@@ -150,6 +172,8 @@ def run(args: argparse.Namespace) -> int:
 
     writer: cv2.VideoWriter | None = create_writer(args.output, capture) if args.output else None
     frame_number = 0
+    last_alert_at = 0.0
+    alert_process: subprocess.Popen[bytes] | None = None
     try:
         while args.max_frames <= 0 or frame_number < args.max_frames:
             ok, frame = capture.read()
@@ -160,6 +184,12 @@ def run(args: argparse.Namespace) -> int:
                 predict_args["device"] = args.device
             result = model.predict(frame, **predict_args)[0]
             annotated = result.plot()
+            if args.alert_wav and len(result.boxes) > 0:
+                now = time.monotonic()
+                process_finished = alert_process is None or alert_process.poll() is not None
+                if process_finished and now - last_alert_at >= args.alert_cooldown:
+                    alert_process = play_alert(args.alert_wav)
+                    last_alert_at = now
             if writer:
                 writer.write(annotated)
             frame_number += 1

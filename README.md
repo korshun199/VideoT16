@@ -120,6 +120,14 @@ python3 -m src.local_object_detection --source /dev/video4 --model models/yolov8
 
 Горячие клавиши окна: `q` или `Esc` — выход, `s` — сохранить текущий кадр.
 
+### Звуковой сигнал
+
+Для локального сигнала при обнаружении положите WAV-файл в `sounds/fpv_detected.wav`. Скрипты `run_fpv.sh` и `run_fpv_orangepi5.sh` подключат его автоматически. Сигнал повторяется не чаще одного раза в 3 секунды. Для Ubuntu установите любой проигрыватель WAV:
+
+```bash
+sudo apt install alsa-utils
+```
+
 Без окна, с записью результата:
 
 ```bash
