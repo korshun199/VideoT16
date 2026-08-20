@@ -82,6 +82,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--window-y", type=int, default=None, help="Положение окна по вертикали")
     parser.add_argument("--max-frames", type=int, default=0, help="Остановиться после N кадров; 0 — без лимита")
     parser.add_argument("--list-cameras", action="store_true", help="Проверить камеры 0..4")
+    parser.add_argument("--inav-port", help="USB-порт INAV, например /dev/ttyACM0")
+    parser.add_argument("--inav-baudrate", type=int, default=115200, help="Скорость MSP-порта INAV")
     return parser
 
 
@@ -186,6 +188,47 @@ def draw_detections(result, generic_label: bool = False):
     return annotated
 
 
+def draw_telemetry(frame, telemetry):
+    """Рисует на кадре последние данные INAV без управления полётником."""
+    import cv2
+
+    lines = [f"INAV {telemetry.variant} {telemetry.version}".strip()]
+    if telemetry.roll is not None:
+        lines.append(f"R {telemetry.roll:.1f}  P {telemetry.pitch:.1f}  Y {telemetry.yaw:.0f}")
+    if telemetry.altitude is not None:
+        lines.append(f"ALT {telemetry.altitude:.2f} m")
+    if telemetry.voltage is not None:
+        rssi_percent = min(100, round((telemetry.rssi or 0) * 100 / 1023))
+        lines.append(f"BAT {telemetry.voltage:.1f} V  RSSI {rssi_percent}%")
+    if telemetry.gps_fix is not None:
+        lines.append(f"GPS fix {telemetry.gps_fix}  SAT {telemetry.gps_satellites or 0}")
+    if telemetry.updated_at <= 0:
+        lines = ["INAV: ожидание MSP"]
+    for index, line in enumerate(lines):
+        position = (20, 36 + index * 28)
+        cv2.putText(
+            frame,
+            line,
+            position,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (0, 0, 0),
+            4,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame,
+            line,
+            position,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (0, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+    return frame
+
+
 def black_background(frame, target_width: int, target_height: int):
     """Помещает кадр по центру чёрного холста без искажения пропорций."""
     import numpy as np
@@ -247,6 +290,12 @@ def run(args: argparse.Namespace) -> int:
     capture = open_capture(resolve_source(parse_source(args.source)))
     if not capture.isOpened():
         raise RuntimeError(f"Не удалось открыть источник камеры: {args.source}")
+    inav_reader = None
+    if args.inav_port:
+        from src.inav_msp import InavMspReader
+
+        inav_reader = InavMspReader(args.inav_port, args.inav_baudrate)
+        print(f"INAV подключён: {args.inav_port} (только чтение MSP)", flush=True)
     if not args.headless:
         cv2.namedWindow("Локальное распознавание объектов", cv2.WINDOW_NORMAL)
         if args.resolution:
@@ -281,6 +330,8 @@ def run(args: argparse.Namespace) -> int:
                 predict_args["device"] = args.device
             result = model.predict(frame, **predict_args)[0]
             annotated = draw_detections(result, args.generic_label)
+            if inav_reader:
+                annotated = draw_telemetry(annotated, inav_reader.update())
             now = time.monotonic()
             if len(result.boxes) > 0:
                 if detection_started_at is None:
@@ -319,6 +370,8 @@ def run(args: argparse.Namespace) -> int:
                     print(f"Снимок сохранён: {target}")
     finally:
         capture.release()
+        if inav_reader:
+            inav_reader.close()
         if writer:
             writer.release()
         cv2.destroyAllWindows()
