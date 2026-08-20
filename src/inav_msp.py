@@ -129,16 +129,22 @@ class InavMspReader:
             self.telemetry.battery_mah_drawn = struct.unpack_from("<H", payload, 1)[0]
             self.telemetry.rssi = struct.unpack_from("<H", payload, 3)[0]
             self.telemetry.battery_current = struct.unpack_from("<h", payload, 5)[0] / 100.0
-        elif command == MSP_RAW_GPS and len(payload) >= 18:
-            fix, satellites, latitude, longitude, _, speed, course, _ = struct.unpack_from(
-                "<BBiiHHHH", payload
-            )
+        elif command == MSP_RAW_GPS and len(payload) >= 2:
+            # Старые версии INAV возвращают 16 байт, новые могут добавлять HDOP.
+            fix, satellites = struct.unpack_from("<BB", payload)
             self.telemetry.gps_fix = fix
             self.telemetry.gps_satellites = satellites
-            self.telemetry.latitude = latitude / 10_000_000.0
-            self.telemetry.longitude = longitude / 10_000_000.0
-            self.telemetry.ground_speed = speed / 100.0
-            self.telemetry.ground_course = course / 10.0
+            if len(payload) >= 10:
+                latitude, longitude = struct.unpack_from("<ii", payload, 2)
+                self.telemetry.latitude = latitude / 10_000_000.0
+                self.telemetry.longitude = longitude / 10_000_000.0
+            # В старом варианте MSP курс может отсутствовать, но скорость есть.
+            if len(payload) >= 14:
+                speed = struct.unpack_from("<H", payload, 12)[0]
+                self.telemetry.ground_speed = speed / 100.0
+            if len(payload) >= 16:
+                course = struct.unpack_from("<H", payload, 14)[0]
+                self.telemetry.ground_course = course / 10.0
         elif command == MSP_STATUS and len(payload) >= 10:
             self.telemetry.mode_flags = struct.unpack_from("<I", payload, 6)[0]
 

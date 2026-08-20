@@ -86,6 +86,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--list-cameras", action="store_true", help="Проверить камеры 0..4")
     parser.add_argument("--inav-port", help="USB-порт INAV, например /dev/ttyACM0")
     parser.add_argument("--inav-baudrate", type=int, default=115200, help="Скорость MSP-порта INAV")
+    parser.add_argument(
+        "--battery-capacity-mah",
+        type=int,
+        default=0,
+        help="Полная ёмкость аккумулятора в мАч для расчёта остатка",
+    )
     return parser
 
 
@@ -235,17 +241,19 @@ def course_to_cardinal(course: float) -> str:
     return directions[int((course + 22.5) // 45) % len(directions)]
 
 
-def draw_telemetry(frame, telemetry):
+def draw_telemetry(frame, telemetry, battery_capacity_mah: int = 0):
     """Рисует на кадре последние данные INAV без управления полётником."""
     import cv2
 
-    lines = [f"INAV {telemetry.variant} {telemetry.version}".strip()]
+    """ lines = [f"FIPIK {telemetry.variant} {telemetry.version} 2026".strip()] """
+    lines = [f"FIPIK BPS  2026".strip()]
     if telemetry.roll is not None:
         lines.append(f"R {telemetry.roll:.1f}  P {telemetry.pitch:.1f}  Y {telemetry.yaw:.0f}")
     if telemetry.altitude is not None:
         lines.append(f"ALT {telemetry.altitude:.2f} m")
     if telemetry.surface_distance is not None:
-        lines.append(f"SURF {telemetry.surface_distance:.2f} m")
+        # AGL — высота над поверхностью по дальномеру полётного контроллера.
+        lines.append(f"AGL {telemetry.surface_distance:.2f} m")
     if telemetry.voltage is not None:
         rssi_percent = min(100, round((telemetry.rssi or 0) * 100 / 1023))
         battery_line = f"BAT {telemetry.voltage:.1f} V"
@@ -253,10 +261,16 @@ def draw_telemetry(frame, telemetry):
             battery_line += f"  I {telemetry.battery_current:.2f} A"
         if telemetry.battery_mah_drawn is not None:
             battery_line += f"  USED {telemetry.battery_mah_drawn} mAh"
+            if battery_capacity_mah > 0:
+                # Процент рассчитывается по расходу относительно полной ёмкости.
+                remaining_mah = max(0, battery_capacity_mah - telemetry.battery_mah_drawn)
+                remaining_percent = round(remaining_mah * 100 / battery_capacity_mah)
+                battery_line += f"  LEFT {remaining_mah} mAh {remaining_percent}%"
         lines.append(f"{battery_line}  RSSI {rssi_percent}%")
     if telemetry.gps_fix is not None:
         lines.append(f"GPS fix {telemetry.gps_fix}  SAT {telemetry.gps_satellites or 0}")
     if telemetry.ground_speed is not None:
+        # Скорость INAV приходит в метрах в секунду; дополнительно показываем км/ч.
         speed_kmh = telemetry.ground_speed * 3.6
         course_text = ""
         if telemetry.ground_course is not None:
@@ -266,6 +280,7 @@ def draw_telemetry(frame, telemetry):
         lines = ["INAV: ожидание MSP"]
     for index, line in enumerate(lines):
         position = (OSD_TEXT["left"], OSD_TEXT["top"] + index * OSD_TEXT["line_spacing"])
+
         put_osd_text(frame, line, position)
     return frame
 
@@ -352,6 +367,8 @@ def run(args: argparse.Namespace) -> int:
         raise ValueError("--confidence должен быть больше 0 и не больше 1")
     if args.alert_cooldown < 0:
         raise ValueError("--alert-cooldown не может быть отрицательным")
+    if args.battery_capacity_mah < 0:
+        raise ValueError("--battery-capacity-mah не может быть отрицательной")
     if args.alert_wav and not args.alert_wav.is_file():
         raise FileNotFoundError(f"WAV-файл не найден: {args.alert_wav}")
 
@@ -424,7 +441,7 @@ def run(args: argparse.Namespace) -> int:
             annotated = draw_detections(result, args.generic_label)
             if inav_reader:
                 telemetry = inav_reader.update()
-                annotated = draw_telemetry(annotated, telemetry)
+                annotated = draw_telemetry(annotated, telemetry, args.battery_capacity_mah)
                 annotated = draw_artificial_horizon(annotated, telemetry)
             now = time.monotonic()
             if len(result.boxes) > 0:
