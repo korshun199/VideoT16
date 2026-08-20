@@ -189,6 +189,18 @@ def draw_detections(result, generic_label: bool = False):
     return annotated
 
 
+def put_osd_text(frame, text: str, position: tuple[int, int]):
+    """Рисует маленький жёлтый текст с минимальной тенью вправо и вниз."""
+    import cv2
+
+    x, y = position
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    # Тень смещена на один пиксель вправо и вниз.
+    cv2.putText(frame, text, (x + 1, y + 1), font, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
+    cv2.putText(frame, text, (x, y), font, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
+    return frame
+
+
 def draw_telemetry(frame, telemetry):
     """Рисует на кадре последние данные INAV без управления полётником."""
     import cv2
@@ -206,27 +218,46 @@ def draw_telemetry(frame, telemetry):
     if telemetry.updated_at <= 0:
         lines = ["INAV: ожидание MSP"]
     for index, line in enumerate(lines):
-        position = (20, 36 + index * 28)
-        cv2.putText(
-            frame,
-            line,
-            position,
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.65,
-            (0, 0, 0),
-            4,
-            cv2.LINE_AA,
-        )
-        cv2.putText(
-            frame,
-            line,
-            position,
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.65,
-            (0, 255, 255),
-            2,
-            cv2.LINE_AA,
-        )
+        position = (20, 30 + index * 24)
+        put_osd_text(frame, line, position)
+    return frame
+
+
+def draw_artificial_horizon(frame, telemetry):
+    """Рисует в центре кадра горизонт и неподвижную ось самолёта."""
+    import math
+
+    import cv2
+
+    if telemetry.roll is None or telemetry.pitch is None:
+        return frame
+
+    frame_height, frame_width = frame.shape[:2]
+    center_x = frame_width // 2
+    center_y = frame_height // 2
+    pitch_scale = 4.0
+    horizon_y = int(center_y + max(-45.0, min(45.0, telemetry.pitch)) * pitch_scale)
+    horizon_length = max(240, min(frame_width, frame_height) // 2)
+    angle = math.radians(-telemetry.roll)
+    half_length = horizon_length / 2
+    delta_x = int(math.cos(angle) * half_length)
+    delta_y = int(math.sin(angle) * half_length)
+    start = (center_x - delta_x, horizon_y - delta_y)
+    end = (center_x + delta_x, horizon_y + delta_y)
+
+    # Жёлтая линия горизонта с чёрной окантовкой остаётся видимой на любом фоне.
+    cv2.line(frame, start, end, (0, 0, 0), 3, cv2.LINE_AA)
+    cv2.line(frame, start, end, (0, 255, 255), 1, cv2.LINE_AA)
+
+    # Белая неподвижная ось и короткие крылья показывают положение центра кадра.
+    axis_top = (center_x, center_y - 50)
+    axis_bottom = (center_x, center_y + 50)
+    left_wing = (center_x - 64, center_y)
+    right_wing = (center_x + 64, center_y)
+    cv2.line(frame, axis_top, axis_bottom, (0, 0, 0), 3, cv2.LINE_AA)
+    cv2.line(frame, axis_top, axis_bottom, (255, 255, 255), 1, cv2.LINE_AA)
+    cv2.line(frame, left_wing, right_wing, (0, 0, 0), 3, cv2.LINE_AA)
+    cv2.line(frame, left_wing, right_wing, (255, 255, 255), 1, cv2.LINE_AA)
     return frame
 
 
@@ -332,7 +363,9 @@ def run(args: argparse.Namespace) -> int:
             result = model.predict(frame, **predict_args)[0]
             annotated = draw_detections(result, args.generic_label)
             if inav_reader:
-                annotated = draw_telemetry(annotated, inav_reader.update())
+                telemetry = inav_reader.update()
+                annotated = draw_telemetry(annotated, telemetry)
+                annotated = draw_artificial_horizon(annotated, telemetry)
             now = time.monotonic()
             if len(result.boxes) > 0:
                 if detection_started_at is None:
