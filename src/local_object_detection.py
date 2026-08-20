@@ -229,6 +229,12 @@ def put_osd_text(frame, text: str, position: tuple[int, int]):
     return frame
 
 
+def course_to_cardinal(course: float) -> str:
+    """Преобразует курс в ближайшее направление по сторонам света."""
+    directions = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+    return directions[int((course + 22.5) // 45) % len(directions)]
+
+
 def draw_telemetry(frame, telemetry):
     """Рисует на кадре последние данные INAV без управления полётником."""
     import cv2
@@ -238,11 +244,24 @@ def draw_telemetry(frame, telemetry):
         lines.append(f"R {telemetry.roll:.1f}  P {telemetry.pitch:.1f}  Y {telemetry.yaw:.0f}")
     if telemetry.altitude is not None:
         lines.append(f"ALT {telemetry.altitude:.2f} m")
+    if telemetry.surface_distance is not None:
+        lines.append(f"SURF {telemetry.surface_distance:.2f} m")
     if telemetry.voltage is not None:
         rssi_percent = min(100, round((telemetry.rssi or 0) * 100 / 1023))
-        lines.append(f"BAT {telemetry.voltage:.1f} V  RSSI {rssi_percent}%")
+        battery_line = f"BAT {telemetry.voltage:.1f} V"
+        if telemetry.battery_current is not None:
+            battery_line += f"  I {telemetry.battery_current:.2f} A"
+        if telemetry.battery_mah_drawn is not None:
+            battery_line += f"  USED {telemetry.battery_mah_drawn} mAh"
+        lines.append(f"{battery_line}  RSSI {rssi_percent}%")
     if telemetry.gps_fix is not None:
         lines.append(f"GPS fix {telemetry.gps_fix}  SAT {telemetry.gps_satellites or 0}")
+    if telemetry.ground_speed is not None:
+        speed_kmh = telemetry.ground_speed * 3.6
+        course_text = ""
+        if telemetry.ground_course is not None:
+            course_text = f"  {course_to_cardinal(telemetry.ground_course)} {telemetry.ground_course:.0f} DEG"
+        lines.append(f"GS {telemetry.ground_speed:.1f} m/s {speed_kmh:.1f} km/h{course_text}")
     if telemetry.updated_at <= 0:
         lines = ["INAV: ожидание MSP"]
     for index, line in enumerate(lines):

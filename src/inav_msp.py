@@ -14,6 +14,7 @@ MSP_RAW_GPS = 106
 MSP_ATTITUDE = 108
 MSP_ALTITUDE = 109
 MSP_ANALOG = 110
+MSP_SONAR_ALTITUDE = 58
 
 
 @dataclass
@@ -27,12 +28,17 @@ class InavTelemetry:
     pitch: float | None = None
     yaw: float | None = None
     altitude: float | None = None
+    surface_distance: float | None = None
     voltage: float | None = None
+    battery_current: float | None = None
+    battery_mah_drawn: int | None = None
     rssi: int | None = None
     gps_fix: int | None = None
     gps_satellites: int | None = None
     latitude: float | None = None
     longitude: float | None = None
+    ground_speed: float | None = None
+    ground_course: float | None = None
     mode_flags: int | None = None
     updated_at: float = 0.0
 
@@ -52,7 +58,14 @@ class InavMspReader:
             raise RuntimeError(f"Не удалось открыть порт INAV {port}: {error}") from error
         self.telemetry = InavTelemetry()
         self._buffer = bytearray()
-        self._commands = [MSP_ATTITUDE, MSP_ALTITUDE, MSP_ANALOG, MSP_RAW_GPS, MSP_STATUS]
+        self._commands = [
+            MSP_ATTITUDE,
+            MSP_ALTITUDE,
+            MSP_ANALOG,
+            MSP_RAW_GPS,
+            MSP_SONAR_ALTITUDE,
+            MSP_STATUS,
+        ]
         self._command_index = 0
         self._next_request_at = 0.0
         self._request_interval = 0.08
@@ -109,15 +122,23 @@ class InavMspReader:
             self.telemetry.yaw = float(yaw)
         elif command == MSP_ALTITUDE and len(payload) >= 4:
             self.telemetry.altitude = struct.unpack_from("<i", payload)[0] / 100.0
-        elif command == MSP_ANALOG and len(payload) >= 5:
+        elif command == MSP_SONAR_ALTITUDE and len(payload) >= 4:
+            self.telemetry.surface_distance = struct.unpack_from("<I", payload)[0] / 100.0
+        elif command == MSP_ANALOG and len(payload) >= 7:
             self.telemetry.voltage = payload[0] / 10.0
+            self.telemetry.battery_mah_drawn = struct.unpack_from("<H", payload, 1)[0]
             self.telemetry.rssi = struct.unpack_from("<H", payload, 3)[0]
-        elif command == MSP_RAW_GPS and len(payload) >= 10:
-            fix, satellites, latitude, longitude = struct.unpack_from("<BBii", payload)
+            self.telemetry.battery_current = struct.unpack_from("<h", payload, 5)[0] / 100.0
+        elif command == MSP_RAW_GPS and len(payload) >= 18:
+            fix, satellites, latitude, longitude, _, speed, course, _ = struct.unpack_from(
+                "<BBiiHHHH", payload
+            )
             self.telemetry.gps_fix = fix
             self.telemetry.gps_satellites = satellites
             self.telemetry.latitude = latitude / 10_000_000.0
             self.telemetry.longitude = longitude / 10_000_000.0
+            self.telemetry.ground_speed = speed / 100.0
+            self.telemetry.ground_course = course / 10.0
         elif command == MSP_STATUS and len(payload) >= 10:
             self.telemetry.mode_flags = struct.unpack_from("<I", payload, 6)[0]
 
