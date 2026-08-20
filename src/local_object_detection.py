@@ -166,7 +166,8 @@ def draw_detections(result, generic_label: bool = False):
     """Рисует рамки и уверенность обнаружения в процентах."""
     import cv2
 
-    annotated = result.plot(labels=False).copy()
+    # Берём исходный кадр, чтобы YOLO не рисовала вторую цветную рамку.
+    annotated = result.orig_img.copy()
     for box in result.boxes:
         x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
         class_id = int(box.cls[0])
