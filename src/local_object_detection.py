@@ -11,6 +11,8 @@ import sys
 import time
 from pathlib import Path
 
+from config.osd_config import AXIS_STYLE, HORIZON_STYLE, OBJECT_STYLE, OSD_TEXT
+
 RUSSIAN_LABELS = [
     "человек", "велосипед", "автомобиль", "мотоцикл", "самолёт", "автобус", "поезд", "грузовик", "лодка",
     "светофор", "пожарный гидрант", "знак стоп", "паркомат", "скамейка", "птица", "кошка", "собака",
@@ -174,16 +176,23 @@ def draw_detections(result, generic_label: bool = False):
         confidence = float(box.conf[0])
         name = "OBJECT" if generic_label else result.names[class_id]
         label = f"{name} {confidence * 100:.0f}%"
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        text_y = max(y1 - 8, 20)
+        object_font = getattr(cv2, OBJECT_STYLE["font"])
+        cv2.rectangle(
+            annotated,
+            (x1, y1),
+            (x2, y2),
+            OBJECT_STYLE["color"],
+            OBJECT_STYLE["box_thickness"],
+        )
+        text_y = max(y1 - OBJECT_STYLE["text_offset_y"], OBJECT_STYLE["text_min_y"])
         cv2.putText(
             annotated,
             label,
             (x1, text_y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (0, 255, 0),
-            2,
+            object_font,
+            OBJECT_STYLE["font_scale"],
+            OBJECT_STYLE["color"],
+            OBJECT_STYLE["text_thickness"],
             cv2.LINE_AA,
         )
     return annotated
@@ -194,10 +203,29 @@ def put_osd_text(frame, text: str, position: tuple[int, int]):
     import cv2
 
     x, y = position
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    # Тень смещена на один пиксель вправо и вниз.
-    cv2.putText(frame, text, (x + 1, y + 1), font, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
-    cv2.putText(frame, text, (x, y), font, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
+    font = getattr(cv2, OSD_TEXT["font"])
+    shadow_x, shadow_y = OSD_TEXT["shadow_offset"]
+    # Тень смещена вправо и вниз на величину из настроечного файла.
+    cv2.putText(
+        frame,
+        text,
+        (x + shadow_x, y + shadow_y),
+        font,
+        OSD_TEXT["font_scale"],
+        OSD_TEXT["shadow_color"],
+        OSD_TEXT["shadow_thickness"],
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        frame,
+        text,
+        (x, y),
+        font,
+        OSD_TEXT["font_scale"],
+        OSD_TEXT["color"],
+        OSD_TEXT["thickness"],
+        cv2.LINE_AA,
+    )
     return frame
 
 
@@ -218,7 +246,7 @@ def draw_telemetry(frame, telemetry):
     if telemetry.updated_at <= 0:
         lines = ["INAV: ожидание MSP"]
     for index, line in enumerate(lines):
-        position = (20, 30 + index * 24)
+        position = (OSD_TEXT["left"], OSD_TEXT["top"] + index * OSD_TEXT["line_spacing"])
         put_osd_text(frame, line, position)
     return frame
 
@@ -235,9 +263,13 @@ def draw_artificial_horizon(frame, telemetry):
     frame_height, frame_width = frame.shape[:2]
     center_x = frame_width // 2
     center_y = frame_height // 2
-    pitch_scale = 4.0
-    horizon_y = int(center_y + max(-45.0, min(45.0, telemetry.pitch)) * pitch_scale)
-    horizon_length = max(240, min(frame_width, frame_height) // 2)
+    pitch_limit = HORIZON_STYLE["pitch_limit"]
+    pitch = max(-pitch_limit, min(pitch_limit, telemetry.pitch))
+    horizon_y = int(center_y + pitch * HORIZON_STYLE["pitch_scale"])
+    horizon_length = max(
+        HORIZON_STYLE["min_length"],
+        int(min(frame_width, frame_height) * HORIZON_STYLE["length_ratio"]),
+    )
     angle = math.radians(-telemetry.roll)
     half_length = horizon_length / 2
     delta_x = int(math.cos(angle) * half_length)
@@ -246,18 +278,27 @@ def draw_artificial_horizon(frame, telemetry):
     end = (center_x + delta_x, horizon_y + delta_y)
 
     # Жёлтая линия горизонта с чёрной окантовкой остаётся видимой на любом фоне.
-    cv2.line(frame, start, end, (0, 0, 0), 3, cv2.LINE_AA)
-    cv2.line(frame, start, end, (0, 255, 255), 1, cv2.LINE_AA)
+    cv2.line(
+        frame,
+        start,
+        end,
+        HORIZON_STYLE["shadow_color"],
+        HORIZON_STYLE["shadow_thickness"],
+        cv2.LINE_AA,
+    )
+    cv2.line(frame, start, end, HORIZON_STYLE["color"], HORIZON_STYLE["thickness"], cv2.LINE_AA)
 
     # Белая неподвижная ось и короткие крылья показывают положение центра кадра.
-    axis_top = (center_x, center_y - 50)
-    axis_bottom = (center_x, center_y + 50)
-    left_wing = (center_x - 64, center_y)
-    right_wing = (center_x + 64, center_y)
-    cv2.line(frame, axis_top, axis_bottom, (0, 0, 0), 3, cv2.LINE_AA)
-    cv2.line(frame, axis_top, axis_bottom, (255, 255, 255), 1, cv2.LINE_AA)
-    cv2.line(frame, left_wing, right_wing, (0, 0, 0), 3, cv2.LINE_AA)
-    cv2.line(frame, left_wing, right_wing, (255, 255, 255), 1, cv2.LINE_AA)
+    vertical_length = AXIS_STYLE["vertical_half_length"]
+    horizontal_length = AXIS_STYLE["horizontal_half_length"]
+    axis_top = (center_x, center_y - vertical_length)
+    axis_bottom = (center_x, center_y + vertical_length)
+    left_wing = (center_x - horizontal_length, center_y)
+    right_wing = (center_x + horizontal_length, center_y)
+    cv2.line(frame, axis_top, axis_bottom, AXIS_STYLE["shadow_color"], AXIS_STYLE["shadow_thickness"], cv2.LINE_AA)
+    cv2.line(frame, axis_top, axis_bottom, AXIS_STYLE["color"], AXIS_STYLE["thickness"], cv2.LINE_AA)
+    cv2.line(frame, left_wing, right_wing, AXIS_STYLE["shadow_color"], AXIS_STYLE["shadow_thickness"], cv2.LINE_AA)
+    cv2.line(frame, left_wing, right_wing, AXIS_STYLE["color"], AXIS_STYLE["thickness"], cv2.LINE_AA)
     return frame
 
 
