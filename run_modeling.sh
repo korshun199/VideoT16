@@ -7,4 +7,6 @@ exec "$PROJECT_DIR/.venv/bin/python3" -m src.local_object_detection \
   --source "${CAMERA_SOURCE:-logitech}" \
   --model "${MODEL_PATH:-$PROJECT_DIR/models/yolov8n.pt}" \
   --inav-port "${INAV_PORT:-/dev/ttyACM0}" \
+  --monitor "${MONITOR_NAME:-HDMI-1}" \
+  --fullscreen \
   "$@"
