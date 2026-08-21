@@ -10,6 +10,7 @@ from src.inav_msp import (
     MSP_ANALOG,
     MSP_ATTITUDE,
     MSP_BOXIDS,
+    MSP_BOXNAMES,
     MSP_MODE_RANGES,
     MSP_RC,
     MSP_STATUS,
@@ -132,6 +133,36 @@ class InavMspReaderTests(unittest.TestCase):
                 telemetry = reader.update()
                 self.assertEqual(telemetry.arm_switch_value, 1800)
                 self.assertTrue(telemetry.arm_switch)
+            finally:
+                reader.close()
+
+    def test_active_mode_is_decoded_from_status_mask(self):
+        with patch.dict(sys.modules, {"serial": self.serial_module}):
+            reader = InavMspReader("/dev/fake")
+            try:
+                names = b"ARM;ANGLE;HORIZON;NAV RTH;AIR MODE;"
+                status_payload = struct.pack("<HHHI", 1000, 0, 0, (1 << 0) | (1 << 3))
+                with reader._telemetry_lock:
+                    reader._decode(MSP_BOXNAMES, names)
+                    reader._decode(MSP_BOXIDS, bytes((0, 1, 2, 3, 4)))
+                    reader._decode(MSP_STATUS, status_payload)
+                telemetry = reader.update()
+                self.assertTrue(telemetry.armed)
+                self.assertEqual(telemetry.active_modes, ("ARM", "NAV RTH"))
+                self.assertEqual(telemetry.flight_mode, "RTH")
+            finally:
+                reader.close()
+
+    def test_armed_without_stabilization_is_acro(self):
+        with patch.dict(sys.modules, {"serial": self.serial_module}):
+            reader = InavMspReader("/dev/fake")
+            try:
+                status_payload = struct.pack("<HHHI", 1000, 0, 0, 1)
+                with reader._telemetry_lock:
+                    reader._decode(MSP_BOXNAMES, b"ARM;ANGLE;AIR MODE;")
+                    reader._decode(MSP_BOXIDS, bytes((0, 1, 2)))
+                    reader._decode(MSP_STATUS, status_payload)
+                self.assertEqual(reader.update().flight_mode, "ACRO")
             finally:
                 reader.close()
 

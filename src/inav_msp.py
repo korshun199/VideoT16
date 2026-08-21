@@ -17,6 +17,7 @@ MSP_RAW_GPS = 106
 MSP_ATTITUDE = 108
 MSP_ALTITUDE = 109
 MSP_ANALOG = 110
+MSP_BOXNAMES = 116
 MSP_BOXIDS = 119
 MSP_SONAR_ALTITUDE = 58
 
@@ -32,6 +33,23 @@ RC_MAX_US = 2000
 # Границы диапазонов режимов INAV кодируются шагами по 25 мкс от 900 мкс.
 MODE_RANGE_MIN_US = 900
 MODE_RANGE_STEP_US = 25
+
+# Порядок соответствует приоритету основных режимов полёта INAV.
+FLIGHT_MODE_PRIORITY = (
+    ("FAILSAFE", ("FAILSAFE",)),
+    ("MANUAL", ("MANUAL",)),
+    ("WAYPOINT", ("NAV WP", "WAYPOINT")),
+    ("RTH", ("NAV RTH", "RTH")),
+    ("POS HOLD", ("NAV POSHOLD", "POSHOLD", "LOITER")),
+    ("CRUISE", ("NAV CRUISE", "CRUISE", "COURSE HOLD")),
+    ("LAUNCH", ("NAV LAUNCH", "LAUNCH")),
+    ("AUTOTUNE", ("AUTO TUNE", "AUTOTUNE")),
+    ("ALT HOLD", ("NAV ALTHOLD", "ALTHOLD", "ALT HOLD")),
+    ("HEAD HOLD", ("HEADING HOLD", "HEAD HOLD", "HEADFREE")),
+    ("ANGLE", ("ANGLE",)),
+    ("HORIZON", ("HORIZON",)),
+    ("LAND", ("NAV LAND", "LAND")),
+)
 
 
 @dataclass
@@ -57,6 +75,8 @@ class InavTelemetry:
     ground_speed: float | None = None
     ground_course: float | None = None
     mode_flags: int | None = None
+    active_modes: tuple[str, ...] = ()
+    flight_mode: str | None = None
     armed: bool | None = None
     arm_switch: bool | None = None
     arm_aux_channel: int | None = None
@@ -80,6 +100,7 @@ class InavMspReader:
         MSP_RAW_GPS: 0.20,
         MSP_ANALOG: 0.50,
         MSP_STATUS: 0.10,
+        MSP_BOXNAMES: 2.00,
         MSP_BOXIDS: 2.00,
     }
 
@@ -95,6 +116,7 @@ class InavMspReader:
         except serial.SerialException as error:
             raise RuntimeError(f"Не удалось открыть порт INAV {port}: {error}") from error
         self.telemetry = InavTelemetry()
+        self._box_names: tuple[str, ...] = ()
         self._box_ids: tuple[int, ...] = ()
         self._arm_ranges: tuple[tuple[int, int, int], ...] = ()
         self._buffer = bytearray()
@@ -246,10 +268,39 @@ class InavMspReader:
         elif command == MSP_STATUS and len(payload) >= 10:
             self.telemetry.mode_flags = struct.unpack_from("<I", payload, 6)[0]
             self._update_armed()
+            self._update_active_modes()
+        elif command == MSP_BOXNAMES:
+            # Имена разделены точкой с запятой и совпадают с битами MSP_STATUS.
+            names = payload.rstrip(b"\x00").decode("ascii", "replace").split(";")
+            if names and not names[-1]:
+                names.pop()
+            self._box_names = tuple(names)
+            self._update_active_modes()
         elif command == MSP_BOXIDS:
             # Позиции ID совпадают с позициями битов активных режимов MSP_STATUS.
             self._box_ids = tuple(payload)
             self._update_armed()
+
+    def _update_active_modes(self) -> None:
+        """Преобразует активные биты INAV в имена и основной режим полёта."""
+        if self.telemetry.mode_flags is None or not self._box_names:
+            return
+        bit_count = min(len(self._box_names), 32)
+        active_modes = tuple(
+            self._box_names[index]
+            for index in range(bit_count)
+            if self.telemetry.mode_flags & (1 << index)
+        )
+        self.telemetry.active_modes = active_modes
+        normalized_modes = tuple(mode.strip().upper() for mode in active_modes)
+        for label, aliases in FLIGHT_MODE_PRIORITY:
+            if any(alias in mode for alias in aliases for mode in normalized_modes):
+                self.telemetry.flight_mode = label
+                return
+        # Если стабилизирующие режимы не активны, INAV находится в RATE/ACRO.
+        self.telemetry.flight_mode = "ACRO AIR" if any(
+            "AIR MODE" in mode or mode == "AIR" for mode in normalized_modes
+        ) else "ACRO"
 
     def _update_armed(self) -> None:
         """Определяет ARM по постоянному ID режима и активной битовой маске."""

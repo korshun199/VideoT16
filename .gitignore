@@ -22,3 +22,4 @@ dataset/my_cat/labels/val/*.txt
 dataset/objects/
 runs/
 .env
+reports/performance/*.txt

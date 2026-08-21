@@ -31,12 +31,12 @@ OSD_TEXT = {
 # Настройки состояния ARM и вертикального индикатора газа справа.
 FLIGHT_STATUS_STYLE = {
     # Отступ блока от правого и верхнего края кадра.
-    "right": 20,
+    "right": 40,
     "top": 30,
     # Расстояние между строками ARM и THR.
     "line_spacing": 24,
     # Положение и размер вертикальной шкалы газа.
-    "bar_top_offset": 76,
+    "bar_top_offset": 36,
     "bar_width": 18,
     "bar_height": 120,
     # Цвет рамки и заполнения шкалы в формате BGR.
@@ -49,9 +49,28 @@ FLIGHT_STATUS_STYLE = {
     # Белый подвижный маркер показывает текущее положение стика газа.
     "marker_color": (255, 255, 255),
     "marker_shadow_color": (0, 0, 0),
-    "marker_thickness": 2,
+    "marker_thickness": 1,
     "marker_shadow_thickness": 4,
     "marker_overhang": 4,
+}
+
+# Крупная нижняя надпись ARM OFF или текущего режима полёта.
+ARM_BANNER_STYLE = {
+    # Шрифт и размер общей нижней надписи.
+    "font": "FONT_HERSHEY_SIMPLEX",
+    "font_scale": 1.0,
+    # ARM OFF мигает красным, активный режим отображается зелёным.
+    "disarmed_color": (0, 0, 255),
+    "armed_color": (0, 255, 0),
+    # Чёрная окантовка сохраняет читаемость на светлом видео.
+    "shadow_color": (0, 0, 0),
+    "thickness": 2,
+    "shadow_thickness": 6,
+    "shadow_offset": (2, 2),
+    # Отступ базовой линии текста от нижнего края кадра.
+    "bottom_margin": 30,
+    # Полный период мигания ARM OFF в секундах.
+    "blink_period": 1.0,
 }
 
 # Настройки рамки и подписи обнаруженного объекта.

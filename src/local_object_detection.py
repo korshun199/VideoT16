@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from config.osd_config import (
+    ARM_BANNER_STYLE,
     AXIS_STYLE,
     FLIGHT_STATUS_STYLE,
     HORIZON_STYLE,
@@ -358,8 +359,8 @@ def draw_flight_status(frame, telemetry):
         arm_switch_details = f" A{telemetry.arm_aux_channel} {telemetry.arm_switch_value}"
     throttle_value = "--" if telemetry.throttle_percent is None else f"{telemetry.throttle_percent}%"
     status_lines = (
-        f"ARM {arm_value}",
-        f"ARM SW {arm_switch_value}{arm_switch_details}",
+        #f"ARM {arm_value}",
+        #f"ARM SW {arm_switch_value}{arm_switch_details}",
         f"THR {throttle_value}",
     )
     for index, text in enumerate(status_lines):
@@ -427,6 +428,51 @@ def draw_flight_status(frame, telemetry):
         FLIGHT_STATUS_STYLE["marker_thickness"],
         cv2.LINE_AA,
     )
+    return frame
+
+
+def draw_arm_banner(frame, telemetry, now: float | None = None):
+    """Рисует снизу мигающий ARM OFF или постоянный режим полёта."""
+    import cv2
+
+    if telemetry.updated_at <= 0 or telemetry.armed is None:
+        return frame
+
+    # Для пилотской надписи используем положение назначенного ARM-тумблера.
+    # Фактическое состояние контроллера отдельно сохраняется в telemetry.armed.
+    arm_enabled = telemetry.arm_switch if telemetry.arm_switch is not None else telemetry.armed
+    if arm_enabled:
+        text = telemetry.flight_mode or "ACRO"
+        color = ARM_BANNER_STYLE["armed_color"]
+    else:
+        blink_period = max(0.1, ARM_BANNER_STYLE["blink_period"])
+        current_time = time.monotonic() if now is None else now
+        if current_time % blink_period >= blink_period / 2:
+            return frame
+        text = "ARM OFF"
+        color = ARM_BANNER_STYLE["disarmed_color"]
+
+    font = getattr(cv2, ARM_BANNER_STYLE["font"])
+    font_scale = ARM_BANNER_STYLE["font_scale"]
+    thickness = ARM_BANNER_STYLE["thickness"]
+    text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+    position = (
+        max(0, (frame.shape[1] - text_size[0]) // 2),
+        max(text_size[1], frame.shape[0] - ARM_BANNER_STYLE["bottom_margin"]),
+    )
+    shadow_offset = ARM_BANNER_STYLE["shadow_offset"]
+    shadow_position = (position[0] + shadow_offset[0], position[1] + shadow_offset[1])
+    cv2.putText(
+        frame,
+        text,
+        shadow_position,
+        font,
+        font_scale,
+        ARM_BANNER_STYLE["shadow_color"],
+        ARM_BANNER_STYLE["shadow_thickness"],
+        cv2.LINE_AA,
+    )
+    cv2.putText(frame, text, position, font, font_scale, color, thickness, cv2.LINE_AA)
     return frame
 
 
@@ -605,6 +651,7 @@ def run(args: argparse.Namespace) -> int:
                 annotated = draw_telemetry(annotated, telemetry, args.battery_capacity_mah)
                 annotated = draw_flight_status(annotated, telemetry)
                 annotated = draw_artificial_horizon(annotated, telemetry)
+                annotated = draw_arm_banner(annotated, telemetry)
             now = time.monotonic()
             # Задержку сигнала считаем только по новым результатам нейросети.
             if inference.sequence != last_inference_sequence:
