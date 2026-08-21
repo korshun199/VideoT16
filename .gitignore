@@ -22,3 +22,8 @@ dataset/my_cat/labels/val/*.txt
 dataset/objects/
 runs/
 .env
+reports/performance/*.txt
+arm64-lab/images/*
+!arm64-lab/images/.gitkeep
+arm64-lab/shared/*
+!arm64-lab/shared/.gitkeep
