@@ -20,7 +20,6 @@ case "${1:-}" in
     ;;
   stop)
     nmcli connection down "$CONNECTION_NAME" >/dev/null 2>&1 || true
-    rm -f "$MARKER"
     ;;
   *)
     echo "Использование: $0 start|stop" >&2

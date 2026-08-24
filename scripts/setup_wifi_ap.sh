@@ -100,6 +100,7 @@ Path("/etc/systemd/system/videot16-wifi-timeout.timer.d/settings.conf").write_te
 PY
 systemctl daemon-reload
 systemctl enable videot16-wifi.service videot16-wifi-timeout.timer videot16-wifi-finish.path
+systemctl stop videot16-wifi-finish.path >/dev/null 2>&1 || true
 systemctl start videot16-wifi.service
 systemctl restart videot16-wifi-timeout.timer
 systemctl start videot16-wifi-finish.path
