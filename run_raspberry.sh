@@ -12,7 +12,7 @@ INFERENCE_SIZE="256"
 INFERENCE_INTERVAL="2"
 GENERIC_LABEL="1"
 HEADLESS="1"
-FRAMEBUFFER_DEVICE="auto"
+DRM_DEVICE="/dev/dri/card1"
 INAV_PORT=""
 TEMPERATURE_INTERVAL="5"
 TEMPERATURE_WARNING="70"
@@ -34,8 +34,8 @@ fi
 if [[ "$HEADLESS" == "1" ]]; then
     RUN_ARGS+=(--headless)
 fi
-if [[ -n "$FRAMEBUFFER_DEVICE" ]]; then
-    RUN_ARGS+=(--framebuffer "$FRAMEBUFFER_DEVICE")
+if [[ -n "$DRM_DEVICE" ]]; then
+    RUN_ARGS+=(--drm "$DRM_DEVICE")
 fi
 if [[ -n "$INAV_PORT" ]]; then
     RUN_ARGS+=(--inav-port "$INAV_PORT")

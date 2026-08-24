@@ -141,6 +141,12 @@ def build_parser() -> argparse.ArgumentParser:
         const="auto",
         help="Выводить обработанное видео в Linux framebuffer; auto — найти Composite-1",
     )
+    parser.add_argument(
+        "--drm",
+        nargs="?",
+        const="/dev/dri/card1",
+        help="Выводить обработанное видео напрямую через DRM/KMS",
+    )
     parser.add_argument("--window-width", type=int, default=1280, help="Ширина окна предпросмотра")
     parser.add_argument("--window-height", type=int, default=720, help="Высота окна предпросмотра")
     parser.add_argument("--resolution", type=parse_resolution, help="Размер окна, например 1920x1080")
@@ -650,7 +656,16 @@ def run(args: argparse.Namespace) -> int:
         inav_reader = InavMspReader(args.inav_port, args.inav_baudrate)
         print(f"INAV подключён: {args.inav_port} (только чтение MSP)", flush=True)
     framebuffer_output = None
-    if args.framebuffer:
+    drm_output = None
+    if args.drm:
+        from src.drm_output import DrmOutput
+
+        drm_output = DrmOutput(args.drm)
+        print(
+            f"DRM подключён: {args.drm} Composite {drm_output.width}x{drm_output.height}",
+            flush=True,
+        )
+    elif args.framebuffer:
         from src.framebuffer_output import FramebufferOutput
 
         framebuffer_output = FramebufferOutput(args.framebuffer)
@@ -737,6 +752,8 @@ def run(args: argparse.Namespace) -> int:
                 writer.write(annotated)
             if framebuffer_output:
                 framebuffer_output.write(annotated)
+            if drm_output:
+                drm_output.write(annotated)
             frame_number += 1
 
             if not args.headless:
@@ -769,6 +786,8 @@ def run(args: argparse.Namespace) -> int:
             writer.release()
         if framebuffer_output:
             framebuffer_output.close()
+        if drm_output:
+            drm_output.close()
         cv2.destroyAllWindows()
     print(f"Обработано кадров: {frame_number}")
     return 0
