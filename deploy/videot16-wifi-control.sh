@@ -16,6 +16,13 @@ CONNECTION_NAME="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]
 case "${1:-}" in
   start)
     rm -f "$MARKER"
+    for _ in $(seq 1 30); do
+      state="$(nmcli -g GENERAL.STATE device show wlan0 2>/dev/null || true)"
+      if [[ "$state" == "30 (disconnected)" || "$state" == "100 (connected)" ]]; then
+        break
+      fi
+      sleep 1
+    done
     nmcli connection up "$CONNECTION_NAME"
     ;;
   stop)
