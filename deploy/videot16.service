@@ -9,8 +9,10 @@ User=oleg
 Group=oleg
 SupplementaryGroups=video render
 WorkingDirectory=/home/oleg/VideoT16
-ExecStartPre=/bin/sh -c 'until test -e /dev/video0 && test -e /dev/dri/by-path/platform-1f00144000.vec-card; do sleep 2; done'
+ExecStartPre=/bin/sh -c 'until test -e /dev/video0 && /usr/bin/kmsprint --device=/dev/dri/by-path/platform-1f00144000.vec-card 2>/dev/null | grep -q "Composite-1 (connected)"; do sleep 2; done'
 ExecStart=/home/oleg/VideoT16/run_raspberry.sh
+Nice=10
+CPUQuota=75%
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=10
