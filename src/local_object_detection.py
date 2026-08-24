@@ -135,6 +135,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", type=Path, help="Путь записи обработанного видео")
     parser.add_argument("--snapshot-dir", type=Path, default=Path("snapshots"))
     parser.add_argument("--headless", action="store_true", help="Работать без окна предпросмотра")
+    parser.add_argument(
+        "--framebuffer",
+        nargs="?",
+        const="auto",
+        help="Выводить обработанное видео в Linux framebuffer; auto — найти Composite-1",
+    )
     parser.add_argument("--window-width", type=int, default=1280, help="Ширина окна предпросмотра")
     parser.add_argument("--window-height", type=int, default=720, help="Высота окна предпросмотра")
     parser.add_argument("--resolution", type=parse_resolution, help="Размер окна, например 1920x1080")
@@ -643,6 +649,17 @@ def run(args: argparse.Namespace) -> int:
 
         inav_reader = InavMspReader(args.inav_port, args.inav_baudrate)
         print(f"INAV подключён: {args.inav_port} (только чтение MSP)", flush=True)
+    framebuffer_output = None
+    if args.framebuffer:
+        from src.framebuffer_output import FramebufferOutput
+
+        framebuffer_output = FramebufferOutput(args.framebuffer)
+        print(
+            f"Framebuffer подключён: {framebuffer_output.device} "
+            f"{framebuffer_output.width}x{framebuffer_output.height} "
+            f"{framebuffer_output.bits_per_pixel} бит",
+            flush=True,
+        )
     fullscreen_pending = False
     if not args.headless:
         cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
@@ -718,6 +735,8 @@ def run(args: argparse.Namespace) -> int:
                         alert_sent_for_detection = True
             if writer:
                 writer.write(annotated)
+            if framebuffer_output:
+                framebuffer_output.write(annotated)
             frame_number += 1
 
             if not args.headless:
@@ -748,6 +767,8 @@ def run(args: argparse.Namespace) -> int:
             inav_reader.close()
         if writer:
             writer.release()
+        if framebuffer_output:
+            framebuffer_output.close()
         cv2.destroyAllWindows()
     print(f"Обработано кадров: {frame_number}")
     return 0
