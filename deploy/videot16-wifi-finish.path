@@ -2,7 +2,7 @@
 Description=VideoT16: ожидание команды завершения настройки
 
 [Path]
-PathExists=/home/oleg/VideoT16/config/wifi_finish.request
+PathChanged=/home/oleg/VideoT16/config/wifi_finish.request
 Unit=videot16-wifi-finish.service
 
 [Install]
