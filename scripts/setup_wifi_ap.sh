@@ -41,7 +41,8 @@ install -m 0644 "$PROJECT_DIR/deploy/videot16-wifi-finish.path" /etc/systemd/sys
 systemctl daemon-reload
 systemctl enable videot16-wifi.service videot16-wifi-timeout.timer videot16-wifi-finish.path
 systemctl start videot16-wifi.service
-systemctl start videot16-wifi-timeout.timer videot16-wifi-finish.path
+systemctl restart videot16-wifi-timeout.timer
+systemctl start videot16-wifi-finish.path
 
 echo "Wi-Fi-точка VideoT16 настроена: SSID=$SSID, адрес=192.168.50.1"
 echo "Таймер отключит её через 15 минут после загрузки."

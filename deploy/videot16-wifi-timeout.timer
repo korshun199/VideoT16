@@ -2,7 +2,7 @@
 Description=VideoT16: таймер отключения Wi-Fi настройки
 
 [Timer]
-OnBootSec=15min
+OnActiveSec=15min
 Unit=videot16-wifi-timeout.service
 
 [Install]
