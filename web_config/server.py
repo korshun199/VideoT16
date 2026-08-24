@@ -60,7 +60,14 @@ class ConfigHandler(BaseHTTPRequestHandler):
             self._send(404, "text/plain; charset=utf-8", b"Not found")
 
     def do_POST(self) -> None:  # noqa: N802 — имя метода задаёт BaseHTTPRequestHandler.
-        if urlparse(self.path).path != "/api/settings":
+        route = urlparse(self.path).path
+        if route == "/api/configuration/finish":
+            marker = self.settings_path.parent / "wifi_finish.request"
+            marker.write_text("finish\n", encoding="utf-8")
+            body = json.dumps({"ok": True, "message": "Wi-Fi отключается"}, ensure_ascii=False).encode()
+            self._send(200, "application/json; charset=utf-8", body)
+            return
+        if route != "/api/settings":
             self._send(404, "text/plain; charset=utf-8", b"Not found")
             return
         try:

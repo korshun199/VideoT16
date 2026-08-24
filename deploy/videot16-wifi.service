@@ -1,0 +1,13 @@
+[Unit]
+Description=VideoT16: наземная Wi-Fi-точка настройки
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/videot16-wifi-control.sh start
+ExecStop=/usr/local/sbin/videot16-wifi-control.sh stop
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
