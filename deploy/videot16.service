@@ -1,7 +1,7 @@
 [Unit]
 Description=VideoT16: локальное распознавание через Raspberry Pi
 Wants=dev-video0.device dev-dri-card1.device
-After=dev-video0.device dev-dri-card1.device multi-user.target
+After=dev-video0.device dev-dri-card1.device local-fs.target
 
 [Service]
 Type=simple
@@ -9,6 +9,7 @@ User=oleg
 Group=oleg
 SupplementaryGroups=video render
 WorkingDirectory=/home/oleg/VideoT16
+ExecStartPre=/bin/sh -c 'until test -e /dev/video0 && test -e /dev/dri/card1; do sleep 2; done'
 ExecStart=/home/oleg/VideoT16/run_raspberry.sh
 Restart=on-failure
 RestartSec=5
