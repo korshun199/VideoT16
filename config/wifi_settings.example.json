@@ -1,0 +1,10 @@
+{
+  "connection_name": "VideoT16-Setup",
+  "ssid": "VideoT16",
+  "password": "замените-на-свой-пароль",
+  "interface": "wlan0",
+  "address": "192.168.50.1/24",
+  "channel": 6,
+  "timeout_minutes": 15,
+  "web_port": 8080
+}
