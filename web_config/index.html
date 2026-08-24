@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VideoT16 — настройки оператора</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    body { max-width: 980px; margin: 0 auto; padding: 24px; background: #111827; color: #e5e7eb; }
+    h1 { margin-top: 0; } h2 { margin-bottom: 10px; color: #93c5fd; }
+    section { background: #1f2937; border: 1px solid #374151; border-radius: 12px; padding: 16px; margin: 14px 0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    label { display: flex; flex-direction: column; gap: 5px; color: #cbd5e1; font-size: .94rem; }
+    input, select, button { font: inherit; border-radius: 7px; border: 1px solid #4b5563; padding: 9px; background: #111827; color: #f9fafb; }
+    input[type=color] { height: 40px; padding: 2px; }
+    button { cursor: pointer; background: #2563eb; border: 0; margin-right: 8px; }
+    button.secondary { background: #4b5563; } #message { margin-top: 12px; color: #86efac; }
+    .hint { color: #9ca3af; font-size: .9rem; } .status { color: #fbbf24; }
+  </style>
+</head>
+<body>
+  <h1>VideoT16 — панель оператора</h1>
+  <p class="hint">Настройки сохраняются локально на плате и подхватываются работающим распознаванием примерно за секунду.</p>
+  <p class="status" id="status">Температура: —</p>
+
+  <section><h2>Распознавание</h2><div class="grid">
+    <label>Порог уверенности, %<input id="confidence_percent" type="number" min="1" max="100"></label>
+    <label>Размер инференса<input id="inference_size" type="number" min="32" max="1280" step="32"></label>
+    <label>Обрабатывать каждый N-й кадр<input id="inference_interval" type="number" min="1" max="30"></label>
+    <label>Подпись объектов<select id="generic_label"><option value="true">OBJECT</option><option value="false">Имена классов</option></select></label>
+  </div></section>
+
+  <section><h2>Рамка объекта</h2><div class="grid">
+    <label>Шрифт<select id="object_font"></select></label>
+    <label>Размер текста<input id="object_font_scale" type="number" min="0.1" max="3" step="0.1"></label>
+    <label>Толщина рамки<input id="box_thickness" type="number" min="1" max="10"></label>
+    <label>Толщина подписи<input id="object_text_thickness" type="number" min="1" max="10"></label>
+    <label>Цвет рамки и подписи<input id="object_color_rgb" type="color"></label>
+  </div></section>
+
+  <section><h2>Телеметрия OSD</h2><div class="grid">
+    <label>Шрифт<select id="osd_font"></select></label>
+    <label>Размер текста<input id="osd_font_scale" type="number" min="0.1" max="3" step="0.1"></label>
+    <label>Толщина текста<input id="osd_thickness" type="number" min="1" max="10"></label>
+    <label>Толщина тени<input id="osd_shadow_thickness" type="number" min="1" max="10"></label>
+    <label>Цвет текста<input id="osd_color_rgb" type="color"></label>
+    <label>Отступ слева<input id="osd_left" type="number" min="0" max="2000"></label>
+    <label>Отступ сверху<input id="osd_top" type="number" min="0" max="2000"></label>
+    <label>Расстояние строк<input id="osd_line_spacing" type="number" min="1" max="200"></label>
+  </div></section>
+
+  <section><h2>Горизонт, ось и состояние полёта</h2><div class="grid">
+    <label>Толщина горизонта<input id="horizon_thickness" type="number" min="1" max="10"></label>
+    <label>Цвет горизонта<input id="horizon_color_rgb" type="color"></label>
+    <label>Толщина оси<input id="axis_thickness" type="number" min="1" max="10"></label>
+    <label>Цвет оси<input id="axis_color_rgb" type="color"></label>
+    <label>Толщина шкалы газа<input id="bar_thickness" type="number" min="1" max="10"></label>
+    <label>Ширина шкалы газа<input id="bar_width" type="number" min="1" max="100"></label>
+    <label>Высота шкалы газа<input id="bar_height" type="number" min="10" max="500"></label>
+    <label>Размер ARM-баннера<input id="arm_font_scale" type="number" min="0.2" max="4" step="0.1"></label>
+  </div></section>
+
+  <button onclick="saveSettings()">Сохранить настройки</button>
+  <button class="secondary" onclick="loadSettings()">Отменить изменения</button>
+  <div id="message"></div>
+  <script>
+    let state = null;
+    const fonts = (items) => { const selects = [document.querySelector('#object_font'), document.querySelector('#osd_font')]; selects.forEach(select => items.forEach(font => { const option = document.createElement('option'); option.value = font; option.textContent = font.replace('FONT_HERSHEY_', ''); select.appendChild(option); })); };
+    const rgbHex = (rgb) => '#' + rgb.map(v => Number(v).toString(16).padStart(2, '0')).join('');
+    const hexRgb = (hex) => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+    const fields = {
+      confidence_percent: ['detection', 'confidence_percent'], inference_size: ['detection', 'inference_size'], inference_interval: ['detection', 'inference_interval'], generic_label: ['detection', 'generic_label'],
+      object_font: ['object', 'font'], object_font_scale: ['object', 'font_scale'], box_thickness: ['object', 'box_thickness'], object_text_thickness: ['object', 'text_thickness'], object_color_rgb: ['object', 'color_rgb'],
+      osd_font: ['osd_text', 'font'], osd_font_scale: ['osd_text', 'font_scale'], osd_thickness: ['osd_text', 'thickness'], osd_shadow_thickness: ['osd_text', 'shadow_thickness'], osd_color_rgb: ['osd_text', 'color_rgb'], osd_left: ['osd_text', 'left'], osd_top: ['osd_text', 'top'], osd_line_spacing: ['osd_text', 'line_spacing'],
+      horizon_thickness: ['horizon', 'thickness'], horizon_color_rgb: ['horizon', 'color_rgb'], axis_thickness: ['axis', 'thickness'], axis_color_rgb: ['axis', 'color_rgb'], bar_thickness: ['flight_status', 'bar_thickness'], bar_width: ['flight_status', 'bar_width'], bar_height: ['flight_status', 'bar_height'], arm_font_scale: ['arm_banner', 'font_scale']
+    };
+    function setField(id, value) { const el = document.getElementById(id); if (id.endsWith('_color_rgb')) el.value = rgbHex(value); else el.value = value; }
+    function getField(id) { const el = document.getElementById(id); if (id.endsWith('_color_rgb')) return hexRgb(el.value); if (el.type === 'number') return Number(el.value); if (id === 'generic_label') return el.value === 'true'; return el.value; }
+    function render() { Object.entries(fields).forEach(([id, path]) => setField(id, state.settings[path[0]][path[1]])); }
+    async function loadSettings() { const response = await fetch('/api/settings'); state = await response.json(); fonts(state.fonts); render(); refreshStatus(); document.getElementById('message').textContent = 'Настройки загружены'; }
+    async function saveSettings() { Object.entries(fields).forEach(([id, path]) => state.settings[path[0]][path[1]] = getField(id)); const response = await fetch('/api/settings', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(state.settings)}); if (response.ok) { state = await response.json(); render(); document.getElementById('message').textContent = 'Сохранено. Распознавание подхватит изменения автоматически.'; } else document.getElementById('message').textContent = 'Ошибка сохранения'; }
+    async function refreshStatus() { const response = await fetch('/api/status'); const data = await response.json(); document.getElementById('status').textContent = 'Температура платы: ' + data.temperature; }
+    loadSettings(); setInterval(refreshStatus, 5000);
+  </script>
+</body>
+</html>

@@ -20,6 +20,7 @@ from config.osd_config import (
     OBJECT_STYLE,
     OSD_TEXT,
 )
+from config.runtime_settings import apply_osd_settings, load_settings
 from src.realtime import Detection, LatestInferenceWorker
 
 RUSSIAN_LABELS = [
@@ -106,6 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", default="logitech", help="logitech, номер камеры, /dev/videoN или RTSP URL")
     parser.add_argument("--model", default="models/yolov8n.pt", help="Путь к локальным весам YOLO")
+    parser.add_argument("--settings", type=Path, default=Path("config/runtime_settings.json"), help="Файл настроек оператора")
     parser.add_argument("--labels", choices=("ru", "en"), default="ru", help="Язык подписей объектов")
     parser.add_argument("--generic-label", action="store_true", help="Показывать для всех объектов подпись OBJECT")
     parser.add_argument("--confidence", type=float, default=0.35, help="Минимальная уверенность 0..1")
@@ -580,6 +582,23 @@ def run(args: argparse.Namespace) -> int:
     model_path = Path(args.model)
     if not model_path.is_file():
         raise FileNotFoundError(f"Локальная модель не найдена: {model_path}. Положите веса в этот путь.")
+    runtime_settings = load_settings(args.settings)
+    apply_osd_settings(
+        runtime_settings,
+        {
+            "object": OBJECT_STYLE,
+            "text": OSD_TEXT,
+            "horizon": HORIZON_STYLE,
+            "axis": AXIS_STYLE,
+            "flight_status": FLIGHT_STATUS_STYLE,
+            "arm_banner": ARM_BANNER_STYLE,
+        },
+    )
+    detection_settings = runtime_settings["detection"]
+    args.confidence_percent = float(detection_settings["confidence_percent"])
+    args.inference_size = int(detection_settings["inference_size"])
+    args.inference_interval = int(detection_settings["inference_interval"])
+    args.generic_label = bool(detection_settings["generic_label"])
     if args.confidence_percent is not None:
         if not 0 < args.confidence_percent <= 100:
             raise ValueError("--confidence-percent должен быть больше 0 и не больше 100")
@@ -703,6 +722,37 @@ def run(args: argparse.Namespace) -> int:
         return extract_detections(result, args.generic_label)
 
     inference_worker = LatestInferenceWorker(predict_frame)
+    runtime_mtime = args.settings.stat().st_mtime_ns if args.settings.exists() else None
+    last_settings_check = 0.0
+
+    def reload_runtime_settings() -> None:
+        """Подхватывает изменения панели без перезапуска видеопотока."""
+        nonlocal runtime_mtime
+        settings = load_settings(args.settings)
+        detection = settings["detection"]
+        args.confidence = max(0.01, min(1.0, float(detection["confidence_percent"]) / 100))
+        args.inference_size = max(32, int(detection["inference_size"]))
+        args.inference_interval = max(1, int(detection["inference_interval"]))
+        args.generic_label = bool(detection["generic_label"])
+        predict_args["conf"] = args.confidence
+        predict_args["imgsz"] = args.inference_size
+        apply_osd_settings(
+            settings,
+            {
+                "object": OBJECT_STYLE,
+                "text": OSD_TEXT,
+                "horizon": HORIZON_STYLE,
+                "axis": AXIS_STYLE,
+                "flight_status": FLIGHT_STATUS_STYLE,
+                "arm_banner": ARM_BANNER_STYLE,
+            },
+        )
+        if onnx_detector is not None:
+            onnx_detector.confidence = args.confidence
+            onnx_detector.size = args.inference_size
+            onnx_detector.generic_label = args.generic_label
+        runtime_mtime = args.settings.stat().st_mtime_ns if args.settings.exists() else None
+
     frame_number = 0
     last_inference_sequence = 0
     last_alert_at = 0.0
@@ -711,6 +761,12 @@ def run(args: argparse.Namespace) -> int:
     alert_process: subprocess.Popen[bytes] | None = None
     try:
         while args.max_frames <= 0 or frame_number < args.max_frames:
+            now_monotonic = time.monotonic()
+            if now_monotonic - last_settings_check >= 1.0:
+                last_settings_check = now_monotonic
+                current_mtime = args.settings.stat().st_mtime_ns if args.settings.exists() else None
+                if current_mtime != runtime_mtime:
+                    reload_runtime_settings()
             ok, frame = capture.read()
             if not ok:
                 raise RuntimeError("Камера не вернула кадр")
