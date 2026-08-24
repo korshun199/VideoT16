@@ -1,0 +1,20 @@
+[Unit]
+Description=VideoT16: локальное распознавание через Raspberry Pi
+Wants=dev-video0.device dev-dri-card1.device
+After=dev-video0.device dev-dri-card1.device multi-user.target
+
+[Service]
+Type=simple
+User=oleg
+Group=oleg
+SupplementaryGroups=video render
+WorkingDirectory=/home/oleg/VideoT16
+ExecStart=/home/oleg/VideoT16/run_raspberry.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
