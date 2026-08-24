@@ -1,7 +1,6 @@
 [Unit]
 Description=VideoT16: локальное распознавание через Raspberry Pi
-Wants=dev-video0.device dev-dri-card1.device
-After=dev-video0.device dev-dri-card1.device local-fs.target
+After=local-fs.target
 
 [Service]
 Type=simple
