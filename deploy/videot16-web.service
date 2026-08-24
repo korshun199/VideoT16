@@ -8,11 +8,13 @@ Type=simple
 User=oleg
 Group=oleg
 WorkingDirectory=/home/oleg/VideoT16
-ExecStart=/home/oleg/VideoT16/scripts/run_config_web.sh --host 0.0.0.0 --port 8080
+ExecStart=/home/oleg/VideoT16/scripts/run_config_web.sh --host 0.0.0.0 --port 80
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target

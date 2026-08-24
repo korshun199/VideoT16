@@ -29,7 +29,7 @@ data = {
     "address": "192.168.50.1/24",
     "channel": 6,
     "timeout_minutes": 15,
-    "web_port": 8080,
+    "web_port": 80,
 }
 path.parent.mkdir(parents=True, exist_ok=True)
 fd, temporary = tempfile.mkstemp(prefix="wifi_settings.", suffix=".tmp", dir=path.parent)
