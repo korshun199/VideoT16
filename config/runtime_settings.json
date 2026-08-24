@@ -10,7 +10,9 @@
     "font_scale": 0.7,
     "text_thickness": 2,
     "box_thickness": 2,
-    "color_rgb": [0, 255, 0]
+    "color_rgb": [0, 255, 0],
+    "text_min_y": 20,
+    "text_offset_y": 8
   },
   "osd_text": {
     "font": "FONT_HERSHEY_SIMPLEX",
@@ -19,12 +21,31 @@
     "shadow_thickness": 2,
     "color_rgb": [255, 255, 0],
     "shadow_color_rgb": [0, 0, 0],
+    "shadow_offset_x": 1,
+    "shadow_offset_y": 1,
     "left": 20,
     "top": 30,
     "line_spacing": 24
   },
-  "horizon": {"thickness": 1, "color_rgb": [255, 255, 0]},
-  "axis": {"thickness": 1, "color_rgb": [255, 255, 255]},
-  "flight_status": {"bar_thickness": 1, "bar_width": 18, "bar_height": 120},
-  "arm_banner": {"font_scale": 1.0, "thickness": 2, "blink_period": 1.0}
+  "horizon": {
+    "pitch_scale": 4.0, "pitch_limit": 45.0, "min_length": 240, "length_ratio": 0.5,
+    "thickness": 1, "color_rgb": [255, 255, 0], "shadow_color_rgb": [0, 0, 0], "shadow_thickness": 3
+  },
+  "axis": {
+    "vertical_half_length": 50, "horizontal_half_length": 64, "thickness": 1,
+    "color_rgb": [255, 255, 255], "shadow_color_rgb": [0, 0, 0], "shadow_thickness": 3
+  },
+  "flight_status": {
+    "right": 40, "top": 30, "line_spacing": 24, "bar_top_offset": 36,
+    "bar_width": 18, "bar_height": 120, "bar_color_rgb": [255, 255, 0], "bar_thickness": 1,
+    "fill_color_rgb": [255, 255, 0], "shadow_color_rgb": [0, 0, 0], "shadow_thickness": 3,
+    "marker_color_rgb": [255, 255, 255], "marker_shadow_color_rgb": [0, 0, 0],
+    "marker_thickness": 1, "marker_shadow_thickness": 4, "marker_overhang": 4
+  },
+  "arm_banner": {
+    "font": "FONT_HERSHEY_SIMPLEX", "font_scale": 1.0, "disarmed_color_rgb": [255, 0, 0],
+    "armed_color_rgb": [0, 255, 0], "shadow_color_rgb": [0, 0, 0], "thickness": 2,
+    "shadow_thickness": 6, "shadow_offset_x": 2, "shadow_offset_y": 2,
+    "bottom_margin": 30, "blink_period": 1.0
+  }
 }
