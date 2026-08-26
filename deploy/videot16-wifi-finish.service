@@ -1,0 +1,6 @@
+[Unit]
+Description=VideoT16: отключение Wi-Fi после настройки
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/videot16-wifi-control.sh stop

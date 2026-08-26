@@ -1,0 +1,9 @@
+[Unit]
+Description=VideoT16: ожидание команды завершения настройки
+
+[Path]
+PathChanged=/home/oleg/VideoT16/config/wifi_finish.request
+Unit=videot16-wifi-finish.service
+
+[Install]
+WantedBy=multi-user.target
