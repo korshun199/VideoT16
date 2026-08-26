@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Установка минимального окружения VideoT16 внутри уже запущенной ВМ.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/config/env.sh"
+
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SSH=(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p "$SSH_PORT")
+
+echo "Установка ARM64-пакетов внутри Debian..."
+"${SSH[@]}" debian@127.0.0.1 \
+    "sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-venv python3-pip python3-opencv python3-numpy"
+"${SSH[@]}" debian@127.0.0.1 \
+    "python3 -m pip install --user onnxruntime"
+
+echo "Передача проверяемых исходников VideoT16 в виртуальную машину..."
+"${SSH[@]}" debian@127.0.0.1 'mkdir -p /home/debian/VideoT16'
+scp -q -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P "$SSH_PORT" \
+    -r "$PROJECT_ROOT/src" "$PROJECT_ROOT/tests" "$PROJECT_ROOT/config" \
+    debian@127.0.0.1:/home/debian/VideoT16/
+scp -q -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P "$SSH_PORT" \
+    "$SCRIPT_DIR/smoke_test.py" "$SCRIPT_DIR/onnx_smoke.py" "$SCRIPT_DIR/onnxruntime_smoke.py" \
+    debian@127.0.0.1:/home/debian/VideoT16/arm64-lab/
+
+echo "Проверка ARM64 Python и OpenCV..."
+"${SSH[@]}" debian@127.0.0.1 \
+    'cd /home/debian/VideoT16 && python3 -c "import platform, cv2, numpy; print(platform.machine()); print(cv2.__version__); print(numpy.__version__)"'
+
+echo "Минимальное ARM64-окружение VideoT16 готово."
+echo "MSP, реальная камера и NPU в QEMU намеренно не эмулируются."
