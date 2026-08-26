@@ -21,7 +21,7 @@ from config.osd_config import (
     OSD_TEXT,
 )
 from config.runtime_settings import apply_osd_settings, load_settings
-from src.realtime import Detection, LatestInferenceWorker
+from src.realtime import Detection, LatestFrameCapture, LatestInferenceWorker
 
 RUSSIAN_LABELS = [
     "человек", "велосипед", "автомобиль", "мотоцикл", "самолёт", "автобус", "поезд", "грузовик", "лодка",
@@ -202,6 +202,15 @@ def open_capture(source: int | str):
     if isinstance(source, int) or (isinstance(source, str) and source.startswith("/dev/video")):
         return cv2.VideoCapture(source, cv2.CAP_V4L2)
     return cv2.VideoCapture(source)
+
+
+def configure_low_latency_capture(capture) -> None:
+    """Настраивает V4L2 на минимальную очередь и MJPEG без принуждения разрешения."""
+    import cv2
+
+    # Не копим старые кадры: приоритет имеет актуальность, а не полнота очереди.
+    capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
 
 
 def resolve_source(source: int | str) -> int | str:
@@ -668,6 +677,7 @@ def run(args: argparse.Namespace) -> int:
     capture = open_capture(resolve_source(parse_source(args.source)))
     if not capture.isOpened():
         raise RuntimeError(f"Не удалось открыть источник камеры: {args.source}")
+    configure_low_latency_capture(capture)
     inav_reader = None
     if args.inav_port:
         from src.inav_msp import InavMspReader
@@ -710,6 +720,7 @@ def run(args: argparse.Namespace) -> int:
         fullscreen_pending = args.fullscreen
 
     writer: cv2.VideoWriter | None = create_writer(args.output, capture) if args.output else None
+    frame_capture = LatestFrameCapture(capture)
     predict_args = {"conf": args.confidence, "verbose": False}
     predict_args["imgsz"] = args.inference_size
     if args.device != "auto":
@@ -767,9 +778,7 @@ def run(args: argparse.Namespace) -> int:
                 current_mtime = args.settings.stat().st_mtime_ns if args.settings.exists() else None
                 if current_mtime != runtime_mtime:
                     reload_runtime_settings()
-            ok, frame = capture.read()
-            if not ok:
-                raise RuntimeError("Камера не вернула кадр")
+            frame = frame_capture.latest()
             if frame_number % args.inference_interval == 0:
                 inference_worker.submit(frame)
             inference = inference_worker.latest()
@@ -835,6 +844,7 @@ def run(args: argparse.Namespace) -> int:
                     print(f"Снимок сохранён: {target}")
     finally:
         inference_worker.close()
+        frame_capture.close()
         capture.release()
         if inav_reader:
             inav_reader.close()

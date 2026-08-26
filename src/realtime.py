@@ -29,6 +29,56 @@ class InferenceSnapshot:
     detections: tuple[Detection, ...] = ()
 
 
+class LatestFrameCapture:
+    """Читает камеру в фоне и хранит только последний кадр."""
+
+    def __init__(self, capture: Any) -> None:
+        """Запускает поток чтения переданного устройства камеры."""
+        self._capture = capture
+        self._lock = threading.Lock()
+        self._frame_ready = threading.Event()
+        self._stop_requested = threading.Event()
+        self._frame: Any | None = None
+        self._error: RuntimeError | None = None
+        self._thread = threading.Thread(
+            target=self._run,
+            name="latest-camera-frame",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def latest(self, timeout: float = 2.0) -> Any:
+        """Возвращает самый новый кадр, не отдавая устаревшую очередь."""
+        if not self._frame_ready.wait(timeout):
+            raise RuntimeError("Камера не вернула кадр за отведённое время")
+        with self._lock:
+            if self._error is not None:
+                raise self._error
+            if self._frame is None:
+                raise RuntimeError("Камера не вернула кадр")
+            return self._frame
+
+    def _run(self) -> None:
+        """Непрерывно читает камеру и заменяет старый кадр новым."""
+        try:
+            while not self._stop_requested.is_set():
+                ok, frame = self._capture.read()
+                if not ok:
+                    raise RuntimeError("Камера не вернула кадр")
+                with self._lock:
+                    self._frame = frame
+                    self._frame_ready.set()
+        except Exception as error:  # noqa: BLE001 — передаём ошибку главному потоку.
+            with self._lock:
+                self._error = error if isinstance(error, RuntimeError) else RuntimeError(str(error))
+                self._frame_ready.set()
+
+    def close(self) -> None:
+        """Останавливает поток чтения камеры перед освобождением устройства."""
+        self._stop_requested.set()
+        self._thread.join(timeout=2.0)
+
+
 class LatestInferenceWorker:
     """Обрабатывает только самый свежий кадр, не задерживая видеовывод."""
 
