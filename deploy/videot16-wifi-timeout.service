@@ -1,6 +1,0 @@
-[Unit]
-Description=VideoT16: завершение наземной настройки по таймеру
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/videot16-wifi-control.sh stop

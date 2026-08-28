@@ -1,3 +1,0 @@
-onnx>=1.16,<2
-onnxruntime>=1.18,<2
-onnxslim>=0.1.82,<1

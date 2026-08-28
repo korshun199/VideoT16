@@ -1,9 +1,0 @@
-[Unit]
-Description=VideoT16: таймер отключения Wi-Fi настройки
-
-[Timer]
-OnActiveSec=15min
-Unit=videot16-wifi-timeout.service
-
-[Install]
-WantedBy=timers.target
