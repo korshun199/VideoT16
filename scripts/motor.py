@@ -62,7 +62,7 @@ def main() -> int:
             port.reset_input_buffer()
             port.write(b"#\r\n")
             read_prompt(port)
-            command = run_motor(port, mt , 1)
+            command = run_motor(port, mt , 20)
             print(f"Отправка: {command!r}")
             read_prompt(port)
             deadline = time.monotonic() + DURATION_SECONDS
