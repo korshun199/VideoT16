@@ -15,13 +15,20 @@ from src.realtime import Detection
 class OnnxDetector:
     """Запускает экспортированную YOLO-модель без Torch и Ultralytics."""
 
-    def __init__(self, path: Path, confidence: float, generic_label: bool, size: int) -> None:
+    def __init__(
+        self,
+        path: Path,
+        confidence: float,
+        generic_label: bool,
+        size: int,
+        cpu_threads: int = 1,
+    ) -> None:
         self.confidence = confidence
         self.generic_label = generic_label
         self.size = size
-        # Ограничиваем параллелизм: поток камеры и SSH должны оставаться отзывчивыми.
+        # Ограничиваем параллелизм, чтобы не забивать поток камеры и систему.
         options = ort.SessionOptions()
-        options.intra_op_num_threads = 1
+        options.intra_op_num_threads = max(1, cpu_threads)
         options.inter_op_num_threads = 1
         options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         self.session = ort.InferenceSession(

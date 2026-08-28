@@ -25,5 +25,5 @@ sudo systemctl enable --now "$SERVICE_NAME"
 sudo systemctl --no-pager --full status "$SERVICE_NAME"
 
 echo
-echo "Панель доступна по адресу: http://$(hostname -I | awk '{print $1}'):8080"
+echo "Панель доступна по адресу: http://$(hostname -I | awk '{print $1}'):80"
 echo "Автономная служба распознавания не изменялась."

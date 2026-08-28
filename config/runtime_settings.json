@@ -2,7 +2,7 @@
   "detection": {
     "confidence_percent": 60,
     "inference_size": 256,
-    "inference_interval": 2,
+    "inference_interval": 5,
     "generic_label": true
   },
   "object": {
@@ -26,6 +26,18 @@
     "left": 20,
     "top": 30,
     "line_spacing": 24
+  },
+  "system_status": {
+    "font": "FONT_HERSHEY_SIMPLEX",
+    "font_scale": 0.5,
+    "color_rgb": [0, 0, 255],
+    "shadow_color_rgb": [0, 0, 0],
+    "thickness": 1,
+    "shadow_thickness": 2,
+    "shadow_offset_x": 1,
+    "shadow_offset_y": 1,
+    "left": 20,
+    "bottom": 18
   },
   "horizon": {
     "pitch_scale": 4.0, "pitch_limit": 45.0, "min_length": 240, "length_ratio": 0.5,

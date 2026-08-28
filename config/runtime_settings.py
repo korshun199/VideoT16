@@ -15,7 +15,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "detection": {
         "confidence_percent": 60,
         "inference_size": 256,
-        "inference_interval": 2,
+        "inference_interval": 5,
         "generic_label": True,
     },
     "object": {
@@ -39,6 +39,18 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "left": 20,
         "top": 30,
         "line_spacing": 24,
+    },
+    "system_status": {
+        "font": "FONT_HERSHEY_SIMPLEX",
+        "font_scale": 0.5,
+        "color_rgb": [0, 0, 255],
+        "shadow_color_rgb": [0, 0, 0],
+        "thickness": 1,
+        "shadow_thickness": 2,
+        "shadow_offset_x": 1,
+        "shadow_offset_y": 1,
+        "left": 20,
+        "bottom": 18,
     },
     "horizon": {
         "pitch_scale": 4.0,
@@ -122,7 +134,7 @@ def save_settings(settings: dict[str, Any], path: Path = SETTINGS_PATH) -> dict[
         raise ValueError("inference_size должен быть от 32 до 1280")
     if not 1 <= int(detection["inference_interval"]) <= 30:
         raise ValueError("inference_interval должен быть от 1 до 30")
-    for section in ("object", "osd_text", "horizon", "axis", "flight_status", "arm_banner"):
+    for section in ("object", "osd_text", "system_status", "horizon", "axis", "flight_status", "arm_banner"):
         for key in (
             "color_rgb", "shadow_color_rgb", "bar_color_rgb", "fill_color_rgb",
             "marker_color_rgb", "marker_shadow_color_rgb", "disarmed_color_rgb",
@@ -164,6 +176,15 @@ def apply_osd_settings(settings: dict[str, Any], styles: dict[str, dict[str, Any
     styles["text"]["shadow_offset"] = (
         int(text_values["shadow_offset_x"]), int(text_values["shadow_offset_y"])
     )
+
+    if "system_status" in styles:
+        system_values = settings["system_status"]
+        styles["system_status"].update(system_values)
+        styles["system_status"]["color"] = _bgr(system_values["color_rgb"])
+        styles["system_status"]["shadow_color"] = _bgr(system_values["shadow_color_rgb"])
+        styles["system_status"]["shadow_offset"] = (
+            int(system_values["shadow_offset_x"]), int(system_values["shadow_offset_y"])
+        )
 
     horizon_values = settings["horizon"]
     styles["horizon"].update(horizon_values)

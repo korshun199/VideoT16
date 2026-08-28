@@ -60,6 +60,25 @@ class LatestInferenceWorkerTests(unittest.TestCase):
         finally:
             worker.close()
 
+    def test_snapshot_contains_submission_time(self):
+        """Проверяет, что результат содержит отметку отправки кадра."""
+        finished = threading.Event()
+
+        def predict(_frame):
+            finished.set()
+            return ()
+
+        worker = LatestInferenceWorker(predict)
+        try:
+            worker.submit("frame")
+            self.assertTrue(finished.wait(1.0))
+            snapshot = wait_for_sequence(worker, 1)
+            self.assertGreater(snapshot.submitted_at, 0.0)
+            self.assertGreaterEqual(snapshot.started_at, snapshot.submitted_at)
+            self.assertGreaterEqual(snapshot.completed_at, snapshot.submitted_at)
+        finally:
+            worker.close()
+
 
 if __name__ == "__main__":
     unittest.main()

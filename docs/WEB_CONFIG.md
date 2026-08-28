@@ -5,16 +5,16 @@
 ## Запуск на ноутбуке или Raspberry Pi
 
 ```bash
-./scripts/run_config_web.sh --host 0.0.0.0 --port 8080
+./scripts/run_config_web.sh --host 0.0.0.0 --port 80
 ```
 
 Откройте в браузере:
 
 ```text
-http://АДРЕС_УСТРОЙСТВА:8080
+http://АДРЕС_УСТРОЙСТВА
 ```
 
-Например: `http://192.168.20.114:8080`.
+Например: `http://192.168.20.114`.
 
 ## Автозапуск панели на Raspberry Pi
 

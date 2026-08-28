@@ -5,11 +5,14 @@ set -Eeuo pipefail
 # Настройки безопасного запуска VideoT16 на Raspberry Pi 5.
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
+# Аналоговая FPV-камера подключена через USB-захват EasyCap.
 CAMERA_SOURCE="/dev/video0"
 MODEL_PATH="models/military_vehicle_best.onnx"
 CONFIDENCE_PERCENT="60"
 INFERENCE_SIZE="256"
-INFERENCE_INTERVAL="2"
+INFERENCE_INTERVAL="5"
+CAMERA_FPS="25"
+CPU_THREADS="1"
 GENERIC_LABEL="1"
 HEADLESS="1"
 DRM_DEVICE="/dev/dri/by-path/platform-1f00144000.vec-card"
@@ -27,6 +30,8 @@ RUN_ARGS=(
     --confidence-percent "$CONFIDENCE_PERCENT"
     --inference-size "$INFERENCE_SIZE"
     --inference-interval "$INFERENCE_INTERVAL"
+    --camera-fps "$CAMERA_FPS"
+    --cpu-threads "$CPU_THREADS"
 )
 
 if [[ "$GENERIC_LABEL" == "1" ]]; then
@@ -45,8 +50,8 @@ if [[ -n "$INAV_PORT" ]]; then
     RUN_ARGS+=(--inav-port "$INAV_PORT")
 fi
 
-printf 'Запуск Raspberry Pi: камера=%s, модель=%s, порог=%s%%, размер=%s, каждый %d-й кадр\n' \
-    "$CAMERA_SOURCE" "$MODEL_PATH" "$CONFIDENCE_PERCENT" "$INFERENCE_SIZE" "$INFERENCE_INTERVAL"
+printf 'Запуск Raspberry Pi: камера=%s, FPS=%s, потоки=%s, модель=%s, порог=%s%%, размер=%s, каждый %d-й кадр\n' \
+    "$CAMERA_SOURCE" "$CAMERA_FPS" "$CPU_THREADS" "$MODEL_PATH" "$CONFIDENCE_PERCENT" "$INFERENCE_SIZE" "$INFERENCE_INTERVAL"
 
 # Следит за температурой и останавливает распознавание при опасном нагреве.
 monitor_temperature() {

@@ -16,6 +16,12 @@ from src.inav_msp import (
     MSP_STATUS,
     InavMspReader,
 )
+from src.betaflight_osd import (
+    build_char_write_packet,
+    build_set_position_packet,
+    build_box_glyphs,
+    encode_osd_position,
+)
 
 
 class FakeSerialException(Exception):
@@ -81,6 +87,7 @@ class InavMspReaderTests(unittest.TestCase):
                 reader.close()
             self.assertTrue(FakeSerial.instances[0].closed)
 
+
     def test_rc_decodes_fourth_channel_as_throttle(self):
         with patch.dict(sys.modules, {"serial": self.serial_module}):
             reader = InavMspReader("/dev/fake")
@@ -93,6 +100,7 @@ class InavMspReaderTests(unittest.TestCase):
                 self.assertEqual(telemetry.throttle_percent, 75)
             finally:
                 reader.close()
+
 
     def test_arm_uses_box_id_position_in_status_mask(self):
         with patch.dict(sys.modules, {"serial": self.serial_module}):
@@ -165,6 +173,33 @@ class InavMspReaderTests(unittest.TestCase):
                 self.assertEqual(reader.update().flight_mode, "ACRO")
             finally:
                 reader.close()
+
+
+class BetaflightOsdTests(unittest.TestCase):
+    """Проверяет формат команды позиции штатного прицела."""
+
+    def test_center_position_matches_betaflight_value(self):
+        self.assertEqual(encode_osd_position(14, 8), 2318)
+
+    def test_packet_contains_crosshairs_index_and_position(self):
+        packet = build_set_position_packet(14, 8)
+        self.assertEqual(packet[:3], b"$M<")
+        self.assertEqual(packet[4], 85)
+        self.assertEqual(packet[5], 2)
+        self.assertEqual(packet[6:8], (2318).to_bytes(2, "little"))
+
+    def test_box_glyphs_have_max7456_visible_size(self):
+        glyphs = build_box_glyphs()
+        self.assertEqual(set(glyphs), {0x72, 0x73, 0x74})
+        self.assertTrue(all(len(glyph) == 54 for glyph in glyphs.values()))
+
+    def test_char_write_packet_contains_glyph(self):
+        glyph = build_box_glyphs()[0x72]
+        packet = build_char_write_packet(0x72, glyph)
+        self.assertEqual(packet[:3], b"$M<")
+        self.assertEqual(packet[4], 87)
+        self.assertEqual(packet[5], 0x72)
+        self.assertEqual(len(packet), 71)
 
 
 if __name__ == "__main__":

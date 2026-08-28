@@ -28,6 +28,19 @@ OSD_TEXT = {
     "line_spacing": 24,
 }
 
+# Настройки синей строки температуры и загрузки CPU для пилота.
+SYSTEM_STATUS_STYLE = {
+    "font": "FONT_HERSHEY_SIMPLEX",
+    "font_scale": 0.5,
+    "color": (255, 0, 0),
+    "shadow_color": (0, 0, 0),
+    "thickness": 1,
+    "shadow_thickness": 2,
+    "shadow_offset": (1, 1),
+    "left": 20,
+    "bottom": 18,
+}
+
 # Настройки состояния ARM и вертикального индикатора газа справа.
 FLIGHT_STATUS_STYLE = {
     # Отступ блока от правого и верхнего края кадра.

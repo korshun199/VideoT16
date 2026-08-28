@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Создаёт предварительный INT8-вариант ONNX для оценки размера."""
+"""Создаёт совместимый с ARM UINT8-вариант ONNX для проверки скорости."""
 
 import argparse
 from pathlib import Path
@@ -18,8 +18,8 @@ def main() -> int:
     quantize_dynamic(
         model_input=str(args.source),
         model_output=str(args.target),
-        weight_type=QuantType.QInt8,
-        per_channel=True,
+        weight_type=QuantType.QUInt8,
+        per_channel=False,
         reduce_range=False,
     )
     print(f"INT8-вариант создан: {args.target}")
@@ -28,4 +28,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

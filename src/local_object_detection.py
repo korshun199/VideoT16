@@ -19,9 +19,10 @@ from config.osd_config import (
     HORIZON_STYLE,
     OBJECT_STYLE,
     OSD_TEXT,
+    SYSTEM_STATUS_STYLE,
 )
 from config.runtime_settings import apply_osd_settings, load_settings
-from src.realtime import Detection, LatestFrameCapture, LatestInferenceWorker
+from src.realtime import Detection, LatestFrameCapture, LatestInferenceWorker, SystemStatusMonitor
 
 RUSSIAN_LABELS = [
     "человек", "велосипед", "автомобиль", "мотоцикл", "самолёт", "автобус", "поезд", "грузовик", "лодка",
@@ -126,10 +127,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Запускать инференс на каждом N-м кадре",
     )
     parser.add_argument(
+        "--camera-fps",
+        type=float,
+        default=0,
+        help="Желаемая частота камеры; 0 — оставить значение камеры",
+    )
+    parser.add_argument(
         "--cpu-threads",
         type=int,
         default=0,
-        help="Число потоков Torch на CPU; 0 — значение по умолчанию",
+        help="Число потоков CPU для Torch и ONNX; 0 — безопасное значение",
     )
     parser.add_argument("--alert-wav", type=Path, help="Локальный WAV для сигнала обнаружения")
     parser.add_argument("--alert-delay", type=float, default=3.0, help="Сколько секунд удерживать обнаружение до сигнала")
@@ -204,13 +211,15 @@ def open_capture(source: int | str):
     return cv2.VideoCapture(source)
 
 
-def configure_low_latency_capture(capture) -> None:
+def configure_low_latency_capture(capture, camera_fps: float = 0) -> None:
     """Настраивает V4L2 на минимальную очередь и MJPEG без принуждения разрешения."""
     import cv2
 
     # Не копим старые кадры: приоритет имеет актуальность, а не полнота очереди.
     capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    if camera_fps > 0:
+        capture.set(cv2.CAP_PROP_FPS, camera_fps)
 
 
 def resolve_source(source: int | str) -> int | str:
@@ -327,6 +336,48 @@ def put_osd_text(frame, text: str, position: tuple[int, int]):
         cv2.LINE_AA,
     )
     return frame
+
+
+def draw_system_status(frame, text: str):
+    """Рисует синюю строку температуры и загрузки CPU внизу слева."""
+    import cv2
+
+    frame_height = frame.shape[0]
+    x = SYSTEM_STATUS_STYLE["left"]
+    y = frame_height - SYSTEM_STATUS_STYLE["bottom"]
+    font = getattr(cv2, SYSTEM_STATUS_STYLE["font"])
+    offset_x, offset_y = SYSTEM_STATUS_STYLE["shadow_offset"]
+    cv2.putText(
+        frame,
+        text,
+        (x + offset_x, y + offset_y),
+        font,
+        SYSTEM_STATUS_STYLE["font_scale"],
+        SYSTEM_STATUS_STYLE["shadow_color"],
+        SYSTEM_STATUS_STYLE["shadow_thickness"],
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        frame,
+        text,
+        (x, y),
+        font,
+        SYSTEM_STATUS_STYLE["font_scale"],
+        SYSTEM_STATUS_STYLE["color"],
+        SYSTEM_STATUS_STYLE["thickness"],
+        cv2.LINE_AA,
+    )
+    return frame
+
+
+def inference_status_text(inference, now: float) -> str:
+    """Формирует ожидание, чистое вычисление и свежесть результата YOLO."""
+    if inference.sequence == 0 or inference.completed_at <= 0:
+        return "AI W--- R--- A---"
+    wait_ms = max(0.0, (inference.started_at - inference.submitted_at) * 1000)
+    run_ms = max(0.0, (inference.completed_at - inference.started_at) * 1000)
+    age_ms = max(0.0, (now - inference.completed_at) * 1000)
+    return f"AI W{wait_ms:.0f} R{run_ms:.0f} A{age_ms:.0f}ms"
 
 
 def course_to_cardinal(course: float) -> str:
@@ -597,6 +648,7 @@ def run(args: argparse.Namespace) -> int:
         {
             "object": OBJECT_STYLE,
             "text": OSD_TEXT,
+            "system_status": SYSTEM_STATUS_STYLE,
             "horizon": HORIZON_STYLE,
             "axis": AXIS_STYLE,
             "flight_status": FLIGHT_STATUS_STYLE,
@@ -656,7 +708,13 @@ def run(args: argparse.Namespace) -> int:
     model = None
     onnx_detector = None
     if model_path.suffix.lower() == ".onnx":
-        onnx_detector = OnnxDetector(model_path, args.confidence, args.generic_label, args.inference_size)
+        onnx_detector = OnnxDetector(
+            model_path,
+            args.confidence,
+            args.generic_label,
+            args.inference_size,
+            args.cpu_threads or 1,
+        )
     else:
         model = YOLO(str(model_path))
     if model is not None and args.labels == "ru":
@@ -677,7 +735,13 @@ def run(args: argparse.Namespace) -> int:
     capture = open_capture(resolve_source(parse_source(args.source)))
     if not capture.isOpened():
         raise RuntimeError(f"Не удалось открыть источник камеры: {args.source}")
-    configure_low_latency_capture(capture)
+    configure_low_latency_capture(capture, args.camera_fps)
+    print(
+        f"Камера: {int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
+        f"{int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))}, "
+        f"{capture.get(cv2.CAP_PROP_FPS):.1f} FPS",
+        flush=True,
+    )
     inav_reader = None
     if args.inav_port:
         from src.inav_msp import InavMspReader
@@ -721,6 +785,7 @@ def run(args: argparse.Namespace) -> int:
 
     writer: cv2.VideoWriter | None = create_writer(args.output, capture) if args.output else None
     frame_capture = LatestFrameCapture(capture)
+    system_status = SystemStatusMonitor()
     predict_args = {"conf": args.confidence, "verbose": False}
     predict_args["imgsz"] = args.inference_size
     if args.device != "auto":
@@ -752,6 +817,7 @@ def run(args: argparse.Namespace) -> int:
             {
                 "object": OBJECT_STYLE,
                 "text": OSD_TEXT,
+                "system_status": SYSTEM_STATUS_STYLE,
                 "horizon": HORIZON_STYLE,
                 "axis": AXIS_STYLE,
                 "flight_status": FLIGHT_STATUS_STYLE,
@@ -765,6 +831,7 @@ def run(args: argparse.Namespace) -> int:
         runtime_mtime = args.settings.stat().st_mtime_ns if args.settings.exists() else None
 
     frame_number = 0
+    last_camera_sequence = 0
     last_inference_sequence = 0
     last_alert_at = 0.0
     detection_started_at: float | None = None
@@ -778,8 +845,11 @@ def run(args: argparse.Namespace) -> int:
                 current_mtime = args.settings.stat().st_mtime_ns if args.settings.exists() else None
                 if current_mtime != runtime_mtime:
                     reload_runtime_settings()
-            frame = frame_capture.latest()
-            if frame_number % args.inference_interval == 0:
+            frame, camera_sequence = frame_capture.latest_with_sequence()
+            new_camera_frame = camera_sequence != last_camera_sequence
+            if new_camera_frame:
+                last_camera_sequence = camera_sequence
+            if new_camera_frame and camera_sequence % args.inference_interval == 0:
                 inference_worker.submit(frame)
             inference = inference_worker.latest()
             annotated = draw_detections(frame, inference.detections)
@@ -790,6 +860,10 @@ def run(args: argparse.Namespace) -> int:
                 annotated = draw_artificial_horizon(annotated, telemetry)
                 annotated = draw_arm_banner(annotated, telemetry)
             now = time.monotonic()
+            annotated = draw_system_status(
+                annotated,
+                f"{system_status.text()} {inference_status_text(inference, now)}",
+            )
             # Задержку сигнала считаем только по новым результатам нейросети.
             if inference.sequence != last_inference_sequence:
                 last_inference_sequence = inference.sequence
