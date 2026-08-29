@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import time
 
 from src.motor import run_motor, stop_motors
@@ -19,6 +18,8 @@ RUN_ENABLED = True
 NO_PROPS_CONFIRMED = True
 # Показывать ответы CLI для диагностики обмена.
 SHOW_RESPONSES = True
+# Уровни четырёх моторов: индексы Betaflight 0, 1, 2, 3.
+MOTOR_LEVELS = (1, 1, 3, 1)
 
 
 def read_prompt(port):
@@ -33,17 +34,11 @@ def read_prompt(port):
     return response
 
 
-def parse_args() -> argparse.Namespace:
-    """Разбирает только четыре уровня моторов 0–10."""
-    parser = argparse.ArgumentParser(description="Тест четырёх моторов Betaflight по шкале 0–10")
-    parser.add_argument("levels", nargs=4, type=int, metavar="MOTOR", help="Уровни четырёх моторов")
-    return parser.parse_args()
-
-
 def main() -> int:
     """Показывает команду или выполняет ограниченный тест с автоостановкой."""
-    args = parse_args()
-    levels = tuple(args.levels)
+    levels = MOTOR_LEVELS
+    if len(levels) != 4 or any(not 0 <= level <= 10 for level in levels):
+        raise SystemExit("MOTOR_LEVELS должен содержать четыре уровня от 0 до 10")
     if not 0 < DURATION_SECONDS <= 3:
         raise SystemExit("DURATION_SECONDS должна быть больше 0 и не больше 3 секунд")
     print(f"Моторы: {levels}; длительность: {DURATION_SECONDS:.1f} с")
@@ -54,25 +49,31 @@ def main() -> int:
         raise SystemExit("Сначала измените NO_PROPS_CONFIRMED = True после снятия пропеллеров")
 
     import serial
-
     with serial.Serial(PORT, baudrate=115200, timeout=0.2) as port:
         try:
-            mt =1
             # Ждём настоящего приглашения CLI, а не угадываем задержку.
             port.reset_input_buffer()
             port.write(b"#\r\n")
             read_prompt(port)
-            command = run_motor(port, mt , 20)
-            print(f"Отправка: {command!r}")
-            read_prompt(port)
-            deadline = time.monotonic() + DURATION_SECONDS
-            while time.monotonic() < deadline:
-                time.sleep(0.1)
+
+            mt = 0
+            while mt in range(0, 4):
+                command = run_motor(port, mt, levels[mt])
+                print(f"Отправка: {command!r}")
+                read_prompt(port)
+                deadline = time.monotonic() + DURATION_SECONDS
+                while time.monotonic() < deadline:
+                    time.sleep(0.1)
+                stop_motors(port)
+                # Забираем ответы на четыре команды остановки перед следующим мотором.
+                for _ in range(4):
+                    read_prompt(port)
+                mt += 1
             port.write(b"exit\r\n")
             port.flush()
         finally:
             stop_motors(port)
-    print("Тест завершён: отправлена команда остановки всех моторов")
+    print("Тест завершён: моторы проверены по очереди, все остановлены")
     return 0
 
 
