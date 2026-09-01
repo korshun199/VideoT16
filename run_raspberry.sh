@@ -65,7 +65,8 @@ if [[ "$configured_camera" == "easycap" ]]; then
     fi
 elif [[ "$configured_camera" == "digital" && "$configured_digital_device" == /dev/video* ]]; then
     CAMERA_INPUT="digital"
-    CAMERA_SOURCE="$configured_digital_device"
+    # CSI-камера Raspberry Pi должна открываться через Picamera2, а не V4L2.
+    CAMERA_SOURCE="picamera"
 else
     printf '[ОШИБКА] Источник камеры не настроен: %s %s\n' "$configured_camera" "$configured_digital_device" >&2
     exit 2

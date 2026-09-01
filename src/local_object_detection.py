@@ -204,10 +204,61 @@ def create_writer(path: Path, capture: cv2.VideoCapture) -> cv2.VideoWriter:
     return writer
 
 
+class PicameraCapture:
+    """Адаптер Picamera2 с интерфейсом, совместимым с OpenCV-захватом."""
+
+    def __init__(self, camera_fps: float = 25.0) -> None:
+        """Запускает сенсор Raspberry Pi в цветном режиме RGB888."""
+        import cv2
+        from picamera2 import Picamera2
+
+        self._camera = Picamera2()
+        self._width = 640
+        self._height = 480
+        self._fps = camera_fps if camera_fps > 0 else 25.0
+        configuration = self._camera.create_video_configuration(
+            main={"size": (self._width, self._height), "format": "RGB888"},
+            controls={"FrameRate": self._fps},
+        )
+        self._camera.configure(configuration)
+        self._camera.start()
+        self._cv2 = cv2
+
+    def isOpened(self) -> bool:  # noqa: N802 — интерфейс OpenCV.
+        """Сообщает, что поток Picamera2 запущен."""
+        return True
+
+    def read(self):
+        """Возвращает последний кадр в формате BGR, как OpenCV."""
+        frame = self._camera.capture_array("main")
+        return True, self._cv2.cvtColor(frame, self._cv2.COLOR_RGB2BGR)
+
+    def get(self, property_id: int) -> float:
+        """Возвращает размер и частоту виртуального OpenCV-потока."""
+        import cv2
+
+        return {
+            cv2.CAP_PROP_FRAME_WIDTH: float(self._width),
+            cv2.CAP_PROP_FRAME_HEIGHT: float(self._height),
+            cv2.CAP_PROP_FPS: float(self._fps),
+        }.get(property_id, 0.0)
+
+    def set(self, property_id: int, value: float) -> bool:
+        """Совместимо принимает настройки OpenCV, уже заданные при старте."""
+        return True
+
+    def release(self) -> None:
+        """Останавливает сенсор и освобождает ресурсы камеры."""
+        self._camera.stop()
+        self._camera.close()
+
+
 def open_capture(source: int | str):
-    """Открывает USB-камеру через V4L2 или поток через авто-бэкенд."""
+    """Открывает Picamera2, USB-камеру через V4L2 или сетевой поток."""
     import cv2
 
+    if source == "picamera":
+        return PicameraCapture()
     if isinstance(source, int) or (isinstance(source, str) and source.startswith("/dev/video")):
         return cv2.VideoCapture(source, cv2.CAP_V4L2)
     return cv2.VideoCapture(source)
@@ -216,6 +267,9 @@ def open_capture(source: int | str):
 def configure_low_latency_capture(capture, camera_fps: float = 0) -> None:
     """Настраивает V4L2 на минимальную очередь и MJPEG без принуждения разрешения."""
     import cv2
+
+    if isinstance(capture, PicameraCapture):
+        return
 
     # Не копим старые кадры: приоритет имеет актуальность, а не полнота очереди.
     capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
