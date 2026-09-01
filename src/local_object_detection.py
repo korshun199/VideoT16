@@ -213,8 +213,9 @@ class PicameraCapture:
         from picamera2 import Picamera2
 
         self._camera = Picamera2()
-        self._width = 640
-        self._height = 480
+        # Берём широкоформатный кадр сенсора; инференс отдельно уменьшает его до 320.
+        self._width = 1920
+        self._height = 1080
         self._fps = camera_fps if camera_fps > 0 else 25.0
         configuration = self._camera.create_video_configuration(
             main={"size": (self._width, self._height), "format": "RGB888"},
