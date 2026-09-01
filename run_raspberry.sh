@@ -15,7 +15,9 @@ INFERENCE_INTERVAL="2"
 CAMERA_FPS="25"
 GENERIC_LABEL="1"
 HEADLESS="1"
-# Наш программный видеослой на J7 отключён: видео выводит штатный тракт полётника.
+# Два выхода настраиваются отдельно в config/runtime_settings.json.
+J7_OUTPUT_ENABLED="1"
+FLIGHT_CONTROLLER_OSD_ENABLED="1"
 DRM_DEVICE="/dev/dri/by-path/platform-1f00144000.vec-card"
 FRAMEBUFFER_DEVICE=""
 INAV_PORT="/dev/ttyACM0"
@@ -38,15 +40,48 @@ try:
 except (KeyError, OSError, TypeError, ValueError):
     print("")
 ')"
+configured_j7="$($PYTHON_BIN -c 'import json
+try: print("1" if json.load(open("config/runtime_settings.json", encoding="utf-8"))["video_output"].get("j7_enabled", True) else "0")
+except (KeyError, OSError, TypeError, ValueError): print("1")
+')"
+configured_fc_osd="$($PYTHON_BIN -c 'import json
+try: print("1" if json.load(open("config/runtime_settings.json", encoding="utf-8"))["video_output"].get("flight_controller_osd_enabled", True) else "0")
+except (KeyError, OSError, TypeError, ValueError): print("1")
+')"
+configured_drm="$($PYTHON_BIN -c 'import json
+try: print(json.load(open("config/runtime_settings.json", encoding="utf-8"))["video_output"].get("drm_device", ""))
+except (KeyError, OSError, TypeError, ValueError): print("")
+')"
+configured_fc_port="$($PYTHON_BIN -c 'import json
+try: print(json.load(open("config/runtime_settings.json", encoding="utf-8"))["video_output"].get("flight_controller_port", ""))
+except (KeyError, OSError, TypeError, ValueError): print("")
+')"
 if [[ "$configured_camera" == "easycap" ]]; then
     CAMERA_INPUT="easycap"
-    CAMERA_SOURCE="/dev/video0"
+    # EasyCap может получить любой номер /dev/videoN; используем стабильное имя udev.
+    CAMERA_SOURCE="$(find /dev/v4l/by-id -maxdepth 1 -type l -name '*video-index0' 2>/dev/null | head -n 1)"
+    if [[ -z "$CAMERA_SOURCE" ]]; then
+        CAMERA_SOURCE="/dev/video0"
+    fi
 elif [[ "$configured_camera" == "digital" && "$configured_digital_device" == /dev/video* ]]; then
     CAMERA_INPUT="digital"
     CAMERA_SOURCE="$configured_digital_device"
 else
     printf '[ОШИБКА] Источник камеры не настроен: %s %s\n' "$configured_camera" "$configured_digital_device" >&2
     exit 2
+fi
+
+if [[ "$configured_j7" == "0" ]]; then
+    J7_OUTPUT_ENABLED="0"
+    DRM_DEVICE=""
+elif [[ "$configured_j7" == "1" && -n "$configured_drm" ]]; then
+    DRM_DEVICE="$configured_drm"
+fi
+if [[ "$configured_fc_osd" == "0" ]]; then
+    FLIGHT_CONTROLLER_OSD_ENABLED="0"
+    INAV_PORT=""
+elif [[ "$configured_fc_osd" == "1" && -n "$configured_fc_port" ]]; then
+    INAV_PORT="$configured_fc_port"
 fi
 
 # Веб-панель может выбрать только модель из каталога models.
@@ -94,6 +129,9 @@ fi
 
 printf 'Запуск Raspberry Pi: камера=%s, FPS=%s, модель=%s, порог=%s%%, размер=%s, каждый %d-й кадр\n' \
     "$CAMERA_SOURCE" "$CAMERA_FPS" "$MODEL_PATH" "$CONFIDENCE_PERCENT" "$INFERENCE_SIZE" "$INFERENCE_INTERVAL"
+printf 'Выходы: J7=%s, штатный Betaflight OSD=%s\n' \
+    "$([[ "$J7_OUTPUT_ENABLED" == "1" ]] && echo ON || echo OFF)" \
+    "$([[ "$FLIGHT_CONTROLLER_OSD_ENABLED" == "1" ]] && echo ON || echo OFF)"
 
 # Следит за температурой и останавливает распознавание при опасном нагреве.
 monitor_temperature() {

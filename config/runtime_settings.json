@@ -8,6 +8,12 @@
     "inference_interval": 2,
     "generic_label": true
   },
+  "video_output": {
+    "j7_enabled": true,
+    "flight_controller_osd_enabled": true,
+    "drm_device": "/dev/dri/by-path/platform-1f00144000.vec-card",
+    "flight_controller_port": "/dev/ttyACM0"
+  },
   "object": {
     "font": "FONT_HERSHEY_SIMPLEX",
     "font_scale": 0.7,

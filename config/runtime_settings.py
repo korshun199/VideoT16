@@ -21,6 +21,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "inference_interval": 2,
         "generic_label": True,
     },
+    "video_output": {
+        "j7_enabled": True,
+        "flight_controller_osd_enabled": True,
+        "drm_device": "/dev/dri/by-path/platform-1f00144000.vec-card",
+        "flight_controller_port": "/dev/ttyACM0",
+    },
     "object": {
         "font": "FONT_HERSHEY_SIMPLEX",
         "font_scale": 0.7,
@@ -137,6 +143,14 @@ def save_settings(settings: dict[str, Any], path: Path = SETTINGS_PATH) -> dict[
         raise ValueError("inference_size должен быть от 32 до 1280")
     if not 1 <= int(detection["inference_interval"]) <= 30:
         raise ValueError("inference_interval должен быть от 1 до 30")
+    video_output = normalized["video_output"]
+    if not isinstance(video_output["j7_enabled"], bool):
+        raise ValueError("video_output.j7_enabled должен быть true или false")
+    if not isinstance(video_output["flight_controller_osd_enabled"], bool):
+        raise ValueError("video_output.flight_controller_osd_enabled должен быть true или false")
+    for key in ("drm_device", "flight_controller_port"):
+        if not isinstance(video_output[key], str):
+            raise ValueError(f"video_output.{key} должен быть строкой")
     for section in ("object", "osd_text", "system_status", "horizon", "axis", "flight_status", "arm_banner"):
         for key in (
             "color_rgb", "shadow_color_rgb", "bar_color_rgb", "fill_color_rgb",

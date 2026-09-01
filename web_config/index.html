@@ -74,6 +74,16 @@
       <p class="hint">После смены источника нажми «Сохранить видео и перезапустить».</p>
       <button onclick="saveVideoAndRestart()">Сохранить видео и перезапустить</button>
     </section>
+    <section><h2>Выходы видео и координат</h2>
+      <div class="grid">
+        <label>Наше видео с рамкой на J7<select id="j7_enabled"><option value="true">Включено</option><option value="false">Выключено</option></select></label>
+        <label>Координаты в штатный Betaflight OSD<select id="flight_controller_osd_enabled"><option value="true">Включено</option><option value="false">Выключено</option></select></label>
+        <label>DRM-устройство J7<input id="drm_device" type="text" placeholder="/dev/dri/by-path/...vec-card"></label>
+        <label>Порт полётника<input id="flight_controller_port" type="text" placeholder="/dev/ttyACM0"></label>
+      </div>
+      <p class="hint">J7 получает обработанное видео. В штатный OSD передаются только координаты обнаруженной цели через MSP; прошивка Betaflight не изменяется.</p>
+      <button onclick="saveOutputsAndRestart()">Сохранить выходы и перезапустить</button>
+    </section>
   </div>
 
   <div id="tab-osd" class="tab-panel">
@@ -144,7 +154,7 @@
     const hexRgb = (hex) => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
     function showTab(name, button) { document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.toggle('active', panel.id === 'tab-' + name)); document.querySelectorAll('.menu button').forEach(item => item.classList.toggle('active', item === button)); }
     const fields = {
-      confidence_percent: ['detection', 'confidence_percent'], inference_size: ['detection', 'inference_size'], inference_interval: ['detection', 'inference_interval'], generic_label: ['detection', 'generic_label'], camera_source: ['detection', 'camera_source'], digital_camera_device: ['detection', 'digital_camera_device'],
+      confidence_percent: ['detection', 'confidence_percent'], inference_size: ['detection', 'inference_size'], inference_interval: ['detection', 'inference_interval'], generic_label: ['detection', 'generic_label'], camera_source: ['detection', 'camera_source'], digital_camera_device: ['detection', 'digital_camera_device'], j7_enabled: ['video_output', 'j7_enabled'], flight_controller_osd_enabled: ['video_output', 'flight_controller_osd_enabled'], drm_device: ['video_output', 'drm_device'], flight_controller_port: ['video_output', 'flight_controller_port'],
       object_font: ['object', 'font'], object_font_scale: ['object', 'font_scale'], box_thickness: ['object', 'box_thickness'], object_text_thickness: ['object', 'text_thickness'], object_color_rgb: ['object', 'color_rgb'], object_text_min_y: ['object', 'text_min_y'], object_text_offset_y: ['object', 'text_offset_y'],
       osd_font: ['osd_text', 'font'], osd_font_scale: ['osd_text', 'font_scale'], osd_thickness: ['osd_text', 'thickness'], osd_shadow_thickness: ['osd_text', 'shadow_thickness'], osd_color_rgb: ['osd_text', 'color_rgb'], osd_left: ['osd_text', 'left'], osd_top: ['osd_text', 'top'], osd_line_spacing: ['osd_text', 'line_spacing'], osd_shadow_offset_x: ['osd_text', 'shadow_offset_x'], osd_shadow_offset_y: ['osd_text', 'shadow_offset_y'],
       system_status_font: ['system_status', 'font'], system_status_font_scale: ['system_status', 'font_scale'], system_status_thickness: ['system_status', 'thickness'], system_status_shadow_thickness: ['system_status', 'shadow_thickness'], system_status_color_rgb: ['system_status', 'color_rgb'], system_status_left: ['system_status', 'left'], system_status_bottom: ['system_status', 'bottom'],
@@ -152,7 +162,7 @@
     };
     function renderModels() { const select = document.getElementById('model_path'); select.replaceChildren(); (state.models || []).forEach(model => { const option = document.createElement('option'); option.value = model; option.textContent = model; select.appendChild(option); }); select.value = state.selected_model || ''; }
     function setField(id, value) { const el = document.getElementById(id); if (!el) return; if (id.endsWith('_color_rgb')) el.value = rgbHex(value); else el.value = value; }
-    function getField(id) { const el = document.getElementById(id); if (!el) return undefined; if (id.endsWith('_color_rgb')) return hexRgb(el.value); if (el.type === 'number') return Number(el.value); if (id === 'generic_label') return el.value === 'true'; return el.value; }
+    function getField(id) { const el = document.getElementById(id); if (!el) return undefined; if (id.endsWith('_color_rgb')) return hexRgb(el.value); if (el.type === 'number') return Number(el.value); if (['generic_label', 'j7_enabled', 'flight_controller_osd_enabled'].includes(id)) return el.value === 'true'; return el.value; }
     function render() { Object.entries(fields).forEach(([id, path]) => setField(id, state.settings[path[0]][path[1]])); }
     async function loadSettings() { const response = await fetch('/api/settings'); state = await response.json(); fonts(state.fonts); renderModels(); render(); refreshStatus(); document.getElementById('message').textContent = 'Настройки загружены'; }
     async function saveSettings() { Object.entries(fields).forEach(([id, path]) => state.settings[path[0]][path[1]] = getField(id)); const response = await fetch('/api/settings', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(state.settings)}); if (response.ok) { state = await response.json(); render(); document.getElementById('message').textContent = 'Сохранено. Распознавание подхватит изменения автоматически.'; } else document.getElementById('message').textContent = 'Ошибка сохранения'; }
@@ -160,6 +170,7 @@
     async function finishConfiguration() { if (!confirm('Настройки сохранены? Wi‑Fi-точка будет отключена до следующего включения платы.')) return; const response = await fetch('/api/configuration/finish', {method: 'POST'}); document.getElementById('message').textContent = response.ok ? 'Настройка завершена. Wi‑Fi отключается.' : 'Ошибка завершения настройки'; }
     async function saveModelAndRestart() { const model = document.getElementById('model_path').value; const save = await fetch('/api/model', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({model})}); if (!save.ok) { document.getElementById('message').textContent = 'Ошибка сохранения модели'; return; } const restart = await fetch('/api/model/restart', {method: 'POST'}); document.getElementById('message').textContent = restart.ok ? 'Модель сохранена, распознавание перезапущено.' : 'Модель сохранена, но служба не перезапустилась: установи helper на Raspberry Pi.'; }
     async function saveVideoAndRestart() { const source = document.getElementById('camera_source').value; const device = document.getElementById('digital_camera_device').value.trim(); const save = await fetch('/api/settings', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({detection: {camera_source: source, digital_camera_device: device}})}); if (!save.ok) { document.getElementById('message').textContent = 'Ошибка сохранения источника видео'; return; } const restart = await fetch('/api/model/restart', {method: 'POST'}); document.getElementById('message').textContent = restart.ok ? 'Источник видео сохранён, распознавание перезапущено.' : 'Источник сохранён, но служба не перезапустилась.'; }
+    async function saveOutputsAndRestart() { ['j7_enabled', 'flight_controller_osd_enabled', 'drm_device', 'flight_controller_port'].forEach(id => { const path = fields[id]; state.settings[path[0]][path[1]] = getField(id); }); const save = await fetch('/api/settings', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({video_output: state.settings.video_output})}); if (!save.ok) { document.getElementById('message').textContent = 'Ошибка сохранения выходов'; return; } const restart = await fetch('/api/model/restart', {method: 'POST'}); document.getElementById('message').textContent = restart.ok ? 'Выходы сохранены, распознавание перезапущено.' : 'Выходы сохранены, но служба не перезапустилась.'; }
     async function refreshStatus() { const response = await fetch('/api/status'); const data = await response.json(); document.getElementById('status').textContent = 'Температура платы: ' + data.temperature; }
     loadSettings(); setInterval(refreshStatus, 5000);
   </script>
