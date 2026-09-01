@@ -1,5 +1,4 @@
 .venv/
-.git-local/
 config/wifi_settings.json
 __pycache__/
 *.py[cod]
@@ -30,3 +29,12 @@ arm64-lab/images/*
 !arm64-lab/images/.gitkeep
 arm64-lab/shared/*
 !arm64-lab/shared/.gitkeep
+# Локальные данные обучения и резервные копии не публикуются в GitHub.
+backup_raspberry/
+dataset/fpv/video/
+dataset/fpv/images/from_videos/
+dataset/fpv/images/annotated/
+dataset/fpv/labels/annotated/
+dataset/fpv/generated/
+:memory:.ses
+pymysql

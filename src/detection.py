@@ -277,12 +277,12 @@ def extract_detections(result, generic_label: bool = False) -> tuple[Detection, 
 def draw_detections(frame, detections: tuple[Detection, ...]):
     """Рисует на свежем кадре последние рамки и уверенность."""
     import cv2
+    import numpy as np
+    from PIL import Image, ImageDraw, ImageFont
 
     # Копия сохраняет исходный кадр неизменным для фонового распознавания.
     annotated = frame.copy()
     for detection in detections:
-        label = f"{detection.name} {detection.confidence * 100:.0f}%"
-        object_font = getattr(cv2, OBJECT_STYLE["font"])
         cv2.rectangle(
             annotated,
             (detection.x1, detection.y1),
@@ -290,21 +290,28 @@ def draw_detections(frame, detections: tuple[Detection, ...]):
             OBJECT_STYLE["color"],
             OBJECT_STYLE["box_thickness"],
         )
+
+    unicode_image = Image.fromarray(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB))
+    unicode_draw = ImageDraw.Draw(unicode_image)
+    unicode_font = ImageFont.truetype(
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        max(12, round(OBJECT_STYLE["font_scale"] * 32)),
+    )
+    for detection in detections:
+        label = f"{detection.name} {detection.confidence * 100:.0f}%"
         text_y = max(
             detection.y1 - OBJECT_STYLE["text_offset_y"],
             OBJECT_STYLE["text_min_y"],
         )
-        cv2.putText(
-            annotated,
+        unicode_draw.text(
+            (detection.x1, text_y - unicode_font.size),
             label,
-            (detection.x1, text_y),
-            object_font,
-            OBJECT_STYLE["font_scale"],
-            OBJECT_STYLE["color"],
-            OBJECT_STYLE["text_thickness"],
-            cv2.LINE_AA,
+            font=unicode_font,
+            fill=tuple(reversed(OBJECT_STYLE["color"])),
+            stroke_width=max(0, OBJECT_STYLE["text_thickness"] - 1),
+            stroke_fill=tuple(reversed(OBJECT_STYLE["color"])),
         )
-    return annotated
+    return cv2.cvtColor(np.asarray(unicode_image), cv2.COLOR_RGB2BGR)
 
 
 def put_osd_text(frame, text: str, position: tuple[int, int]):

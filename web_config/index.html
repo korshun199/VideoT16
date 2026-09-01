@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VideoT16 — настройки оператора</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    body { max-width: 980px; margin: 0 auto; padding: 24px; background: #111827; color: #e5e7eb; }
+    h1 { margin-top: 0; } h2 { margin-bottom: 10px; color: #93c5fd; }
+    section { background: #1f2937; border: 1px solid #374151; border-radius: 12px; padding: 16px; margin: 14px 0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    label { display: flex; flex-direction: column; gap: 5px; color: #cbd5e1; font-size: .94rem; }
+    input, select, button { font: inherit; border-radius: 7px; border: 1px solid #4b5563; padding: 9px; background: #111827; color: #f9fafb; }
+    input[type=color] { height: 40px; padding: 2px; }
+    button { cursor: pointer; background: #2563eb; border: 0; margin-right: 8px; }
+    button.secondary { background: #4b5563; } #message { margin-top: 12px; color: #86efac; }
+    .hint { color: #9ca3af; font-size: .9rem; } .status { color: #fbbf24; }
+    .menu { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 18px 0; }
+    .menu button { margin: 0; background: #374151; }
+    .menu button.active { background: #2563eb; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    .video-info { line-height: 1.6; color: #cbd5e1; }
+    .video-info code { color: #93c5fd; }
+    @media (max-width: 560px) {
+      body { padding: 14px; }
+      .menu button { padding: 12px 6px; }
+      section { padding: 12px; }
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <h1>VideoT16 — панель оператора</h1>
+  <p class="hint">Настройки сохраняются локально на плате и подхватываются работающим распознаванием примерно за секунду.</p>
+  <p class="status" id="status">Температура: —</p>
+
+  <nav class="menu" aria-label="Разделы панели">
+    <button class="active" data-tab="recognition" onclick="showTab('recognition', this)">Распознавание</button>
+    <button data-tab="video" onclick="showTab('video', this)">Видео</button>
+    <button data-tab="osd" onclick="showTab('osd', this)">OSD</button>
+  </nav>
+
+  <div id="tab-recognition" class="tab-panel active">
+  <section><h2>Распознавание</h2><div class="grid">
+    <label>Модель<select id="model_path"></select></label>
+    <label>Порог уверенности, %<input id="confidence_percent" type="number" min="1" max="100"></label>
+    <label>Размер инференса<input id="inference_size" type="number" min="32" max="1280" step="32"></label>
+    <label>Обрабатывать каждый N-й кадр<input id="inference_interval" type="number" min="1" max="30"></label>
+    <label>Подпись объектов<select id="generic_label"><option value="true">OBJECT</option><option value="false">Имена классов</option></select></label>
+  </div></section>
+
+  <section><h2>Рамка объекта</h2><div class="grid">
+    <label>Шрифт<select id="object_font"></select></label>
+    <label>Размер текста<input id="object_font_scale" type="number" min="0.1" max="3" step="0.1"></label>
+    <label>Толщина рамки<input id="box_thickness" type="number" min="1" max="10"></label>
+    <label>Толщина подписи<input id="object_text_thickness" type="number" min="1" max="10"></label>
+    <label>Цвет рамки и подписи<input id="object_color_rgb" type="color"></label>
+    <label>Минимальная высота подписи<input id="object_text_min_y" type="number" min="0" max="2000"></label>
+    <label>Отступ подписи от рамки<input id="object_text_offset_y" type="number" min="0" max="200"></label>
+  </div></section>
+
+  </div>
+
+  <div id="tab-video" class="tab-panel">
+    <section><h2>Видео</h2>
+      <div class="grid">
+        <label>Источник видео<select id="camera_source"><option value="easycap">EasyCap — аналоговый</option><option value="digital">Цифровая камера Raspberry Pi</option></select></label>
+        <label>Устройство цифровой камеры<input id="digital_camera_device" type="text" placeholder="например /dev/video20"></label>
+      </div>
+      <p class="video-info">Видеопоток идёт напрямую через Raspberry Pi на аналоговый выход J7.</p>
+      <p class="video-info">EasyCap: <code>/dev/video0</code><br>Цифровая камера: проверенный путь <code>/dev/videoN</code><br>Целевая частота: 25 FPS<br>Выход: PAL через J7</p>
+      <p class="hint">После смены источника нажми «Сохранить видео и перезапустить».</p>
+      <button onclick="saveVideoAndRestart()">Сохранить видео и перезапустить</button>
+    </section>
+  </div>
+
+  <div id="tab-osd" class="tab-panel">
+
+  <section><h2>Телеметрия OSD</h2><div class="grid">
+    <label>Шрифт<select id="osd_font"></select></label>
+    <label>Размер текста<input id="osd_font_scale" type="number" min="0.1" max="3" step="0.1"></label>
+    <label>Толщина текста<input id="osd_thickness" type="number" min="1" max="10"></label>
+    <label>Толщина тени<input id="osd_shadow_thickness" type="number" min="1" max="10"></label>
+    <label>Цвет текста<input id="osd_color_rgb" type="color"></label>
+    <label>Отступ слева<input id="osd_left" type="number" min="0" max="2000"></label>
+    <label>Отступ сверху<input id="osd_top" type="number" min="0" max="2000"></label>
+    <label>Расстояние строк<input id="osd_line_spacing" type="number" min="1" max="200"></label>
+    <label>Смещение тени вправо<input id="osd_shadow_offset_x" type="number" min="-50" max="50"></label>
+    <label>Смещение тени вниз<input id="osd_shadow_offset_y" type="number" min="-50" max="50"></label>
+  </div></section>
+  <section><h2>Горизонт, ось и состояние полёта</h2><div class="grid">
+    <label>Толщина горизонта<input id="horizon_thickness" type="number" min="1" max="10"></label>
+    <label>Цвет горизонта<input id="horizon_color_rgb" type="color"></label>
+    <label>Пикселей на градус горизонта<input id="horizon_pitch_scale" type="number" min="0.1" max="50" step="0.1"></label>
+    <label>Предел тангажа<input id="horizon_pitch_limit" type="number" min="1" max="90"></label>
+    <label>Минимальная длина горизонта<input id="horizon_min_length" type="number" min="10" max="4000"></label>
+    <label>Доля длины горизонта<input id="horizon_length_ratio" type="number" min="0.1" max="1" step="0.05"></label>
+    <label>Тень горизонта<input id="horizon_shadow_thickness" type="number" min="0" max="20"></label>
+    <label>Толщина оси<input id="axis_thickness" type="number" min="1" max="10"></label>
+    <label>Цвет оси<input id="axis_color_rgb" type="color"></label>
+    <label>Вертикальная половина оси<input id="axis_vertical_half_length" type="number" min="1" max="500"></label>
+    <label>Горизонтальная половина оси<input id="axis_horizontal_half_length" type="number" min="1" max="500"></label>
+    <label>Толщина шкалы газа<input id="bar_thickness" type="number" min="1" max="10"></label>
+    <label>Ширина шкалы газа<input id="bar_width" type="number" min="1" max="100"></label>
+    <label>Высота шкалы газа<input id="bar_height" type="number" min="10" max="500"></label>
+    <label>Отступ шкалы справа<input id="status_right" type="number" min="0" max="2000"></label>
+    <label>Отступ шкалы сверху<input id="status_top" type="number" min="0" max="2000"></label>
+    <label>Цвет шкалы<input id="bar_color_rgb" type="color"></label>
+    <label>Цвет заполнения<input id="fill_color_rgb" type="color"></label>
+    <label>Размер ARM-баннера<input id="arm_font_scale" type="number" min="0.2" max="4" step="0.1"></label>
+    <label>Шрифт ARM<select id="arm_font"></select></label>
+    <label>Цвет ARM OFF<input id="disarmed_color_rgb" type="color"></label>
+    <label>Цвет активного режима<input id="armed_color_rgb" type="color"></label>
+    <label>Толщина ARM<input id="arm_thickness" type="number" min="1" max="10"></label>
+    <label>Тень ARM<input id="arm_shadow_thickness" type="number" min="0" max="20"></label>
+    <label>Отступ ARM снизу<input id="arm_bottom_margin" type="number" min="0" max="1000"></label>
+    <label>Период мигания ARM OFF, с<input id="arm_blink_period" type="number" min="0.1" max="10" step="0.1"></label>
+  </div></section>
+
+  <section><h2>Состояние платы</h2><div class="grid">
+    <label>Шрифт<select id="system_status_font"></select></label>
+    <label>Размер текста<input id="system_status_font_scale" type="number" min="0.1" max="3" step="0.1"></label>
+    <label>Толщина текста<input id="system_status_thickness" type="number" min="1" max="10"></label>
+    <label>Толщина тени<input id="system_status_shadow_thickness" type="number" min="0" max="20"></label>
+    <label>Цвет текста<input id="system_status_color_rgb" type="color"></label>
+    <label>Отступ слева<input id="system_status_left" type="number" min="0" max="2000"></label>
+    <label>Отступ снизу<input id="system_status_bottom" type="number" min="0" max="2000"></label>
+  </div></section>
+
+  </div>
+
+  <button onclick="saveSettings()">Сохранить настройки</button>
+  <button onclick="saveModelAndRestart()">Сохранить модель и перезапустить</button>
+  <button class="secondary" onclick="loadSettings()">Отменить изменения</button>
+  <button class="secondary" onclick="resetSettings()">Вернуть значения по умолчанию</button>
+  <button class="secondary" onclick="finishConfiguration()">Завершить настройку и отключить Wi‑Fi</button>
+  <div id="message"></div>
+  <script>
+    let state = null;
+    const fonts = (items) => { const selects = ['#object_font', '#osd_font', '#arm_font', '#system_status_font'].map(selector => document.querySelector(selector)).filter(Boolean); selects.forEach(select => { select.replaceChildren(); items.forEach(font => { const option = document.createElement('option'); option.value = font; option.textContent = font.replace('FONT_HERSHEY_', ''); select.appendChild(option); }); }); };
+    const rgbHex = (rgb) => '#' + rgb.map(v => Number(v).toString(16).padStart(2, '0')).join('');
+    const hexRgb = (hex) => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+    function showTab(name, button) { document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.toggle('active', panel.id === 'tab-' + name)); document.querySelectorAll('.menu button').forEach(item => item.classList.toggle('active', item === button)); }
+    const fields = {
+      confidence_percent: ['detection', 'confidence_percent'], inference_size: ['detection', 'inference_size'], inference_interval: ['detection', 'inference_interval'], generic_label: ['detection', 'generic_label'], camera_source: ['detection', 'camera_source'], digital_camera_device: ['detection', 'digital_camera_device'],
+      object_font: ['object', 'font'], object_font_scale: ['object', 'font_scale'], box_thickness: ['object', 'box_thickness'], object_text_thickness: ['object', 'text_thickness'], object_color_rgb: ['object', 'color_rgb'], object_text_min_y: ['object', 'text_min_y'], object_text_offset_y: ['object', 'text_offset_y'],
+      osd_font: ['osd_text', 'font'], osd_font_scale: ['osd_text', 'font_scale'], osd_thickness: ['osd_text', 'thickness'], osd_shadow_thickness: ['osd_text', 'shadow_thickness'], osd_color_rgb: ['osd_text', 'color_rgb'], osd_left: ['osd_text', 'left'], osd_top: ['osd_text', 'top'], osd_line_spacing: ['osd_text', 'line_spacing'], osd_shadow_offset_x: ['osd_text', 'shadow_offset_x'], osd_shadow_offset_y: ['osd_text', 'shadow_offset_y'],
+      system_status_font: ['system_status', 'font'], system_status_font_scale: ['system_status', 'font_scale'], system_status_thickness: ['system_status', 'thickness'], system_status_shadow_thickness: ['system_status', 'shadow_thickness'], system_status_color_rgb: ['system_status', 'color_rgb'], system_status_left: ['system_status', 'left'], system_status_bottom: ['system_status', 'bottom'],
+      horizon_thickness: ['horizon', 'thickness'], horizon_color_rgb: ['horizon', 'color_rgb'], horizon_pitch_scale: ['horizon', 'pitch_scale'], horizon_pitch_limit: ['horizon', 'pitch_limit'], horizon_min_length: ['horizon', 'min_length'], horizon_length_ratio: ['horizon', 'length_ratio'], horizon_shadow_thickness: ['horizon', 'shadow_thickness'], axis_thickness: ['axis', 'thickness'], axis_color_rgb: ['axis', 'color_rgb'], axis_vertical_half_length: ['axis', 'vertical_half_length'], axis_horizontal_half_length: ['axis', 'horizontal_half_length'], bar_thickness: ['flight_status', 'bar_thickness'], bar_width: ['flight_status', 'bar_width'], bar_height: ['flight_status', 'bar_height'], status_right: ['flight_status', 'right'], status_top: ['flight_status', 'top'], bar_color_rgb: ['flight_status', 'bar_color_rgb'], fill_color_rgb: ['flight_status', 'fill_color_rgb'], arm_font: ['arm_banner', 'font'], arm_font_scale: ['arm_banner', 'font_scale'], disarmed_color_rgb: ['arm_banner', 'disarmed_color_rgb'], armed_color_rgb: ['arm_banner', 'armed_color_rgb'], arm_thickness: ['arm_banner', 'thickness'], arm_shadow_thickness: ['arm_banner', 'shadow_thickness'], arm_bottom_margin: ['arm_banner', 'bottom_margin'], arm_blink_period: ['arm_banner', 'blink_period']
+    };
+    function renderModels() { const select = document.getElementById('model_path'); select.replaceChildren(); (state.models || []).forEach(model => { const option = document.createElement('option'); option.value = model; option.textContent = model; select.appendChild(option); }); select.value = state.selected_model || ''; }
+    function setField(id, value) { const el = document.getElementById(id); if (!el) return; if (id.endsWith('_color_rgb')) el.value = rgbHex(value); else el.value = value; }
+    function getField(id) { const el = document.getElementById(id); if (!el) return undefined; if (id.endsWith('_color_rgb')) return hexRgb(el.value); if (el.type === 'number') return Number(el.value); if (id === 'generic_label') return el.value === 'true'; return el.value; }
+    function render() { Object.entries(fields).forEach(([id, path]) => setField(id, state.settings[path[0]][path[1]])); }
+    async function loadSettings() { const response = await fetch('/api/settings'); state = await response.json(); fonts(state.fonts); renderModels(); render(); refreshStatus(); document.getElementById('message').textContent = 'Настройки загружены'; }
+    async function saveSettings() { Object.entries(fields).forEach(([id, path]) => state.settings[path[0]][path[1]] = getField(id)); const response = await fetch('/api/settings', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(state.settings)}); if (response.ok) { state = await response.json(); render(); document.getElementById('message').textContent = 'Сохранено. Распознавание подхватит изменения автоматически.'; } else document.getElementById('message').textContent = 'Ошибка сохранения'; }
+    async function resetSettings() { if (!confirm('Вернуть все параметры к значениям по умолчанию?')) return; const response = await fetch('/api/settings', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}); if (response.ok) { state = await response.json(); render(); document.getElementById('message').textContent = 'Возвращены значения по умолчанию.'; } else document.getElementById('message').textContent = 'Ошибка сброса'; }
+    async function finishConfiguration() { if (!confirm('Настройки сохранены? Wi‑Fi-точка будет отключена до следующего включения платы.')) return; const response = await fetch('/api/configuration/finish', {method: 'POST'}); document.getElementById('message').textContent = response.ok ? 'Настройка завершена. Wi‑Fi отключается.' : 'Ошибка завершения настройки'; }
+    async function saveModelAndRestart() { const model = document.getElementById('model_path').value; const save = await fetch('/api/model', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({model})}); if (!save.ok) { document.getElementById('message').textContent = 'Ошибка сохранения модели'; return; } const restart = await fetch('/api/model/restart', {method: 'POST'}); document.getElementById('message').textContent = restart.ok ? 'Модель сохранена, распознавание перезапущено.' : 'Модель сохранена, но служба не перезапустилась: установи helper на Raspberry Pi.'; }
+    async function saveVideoAndRestart() { const source = document.getElementById('camera_source').value; const device = document.getElementById('digital_camera_device').value.trim(); const save = await fetch('/api/settings', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({detection: {camera_source: source, digital_camera_device: device}})}); if (!save.ok) { document.getElementById('message').textContent = 'Ошибка сохранения источника видео'; return; } const restart = await fetch('/api/model/restart', {method: 'POST'}); document.getElementById('message').textContent = restart.ok ? 'Источник видео сохранён, распознавание перезапущено.' : 'Источник сохранён, но служба не перезапустилась.'; }
+    async function refreshStatus() { const response = await fetch('/api/status'); const data = await response.json(); document.getElementById('status').textContent = 'Температура платы: ' + data.temperature; }
+    loadSettings(); setInterval(refreshStatus, 5000);
+  </script>
+</body>
+</html>

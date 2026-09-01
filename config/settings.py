@@ -16,7 +16,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "confidence_percent": 60,
         "inference_size": 256,
         "inference_interval": 5,
-        "generic_label": True,
+        "generic_label": False,
     },
     "object": {
         "font": "FONT_HERSHEY_SIMPLEX",

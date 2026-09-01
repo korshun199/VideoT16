@@ -1,9 +1,9 @@
 {
   "detection": {
     "confidence_percent": 60,
-    "inference_size": 256,
+    "inference_size": 640,
     "inference_interval": 5,
-    "generic_label": true
+    "generic_label": false
   },
   "object": {
     "font": "FONT_HERSHEY_SIMPLEX",

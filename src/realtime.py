@@ -26,8 +26,6 @@ class InferenceSnapshot:
     """Последний полностью обработанный результат нейросети."""
 
     sequence: int = 0
-    submitted_at: float = 0.0
-    started_at: float = 0.0
     completed_at: float = 0.0
     detections: tuple[Detection, ...] = ()
 
@@ -83,30 +81,6 @@ class SystemStatusMonitor:
         return self._text
 
 
-class FrameRateMonitor:
-    """Считает фактическую частоту кадров основного видеовыхода."""
-
-    def __init__(self, interval: float = 1.0) -> None:
-        """Создаёт счётчик кадров с периодом обновления показателя."""
-        self._interval = interval
-        self._started_at = time.monotonic()
-        self._last_update = self._started_at
-        self._frames = 0
-        self._text = "FPS --.-"
-
-    def text(self, count_frame: bool = True) -> str:
-        """Возвращает средний FPS за последний измерительный интервал."""
-        if count_frame:
-            self._frames += 1
-        now = time.monotonic()
-        elapsed = now - self._last_update
-        if elapsed >= self._interval:
-            self._text = f"TS {self._frames / elapsed:.1f}"
-            self._frames = 0
-            self._last_update = now
-        return self._text
-
-
 class LatestFrameCapture:
     """Читает камеру в фоне и хранит только последний кадр."""
 
@@ -117,7 +91,6 @@ class LatestFrameCapture:
         self._frame_ready = threading.Event()
         self._stop_requested = threading.Event()
         self._frame: Any | None = None
-        self._sequence = 0
         self._error: RuntimeError | None = None
         self._thread = threading.Thread(
             target=self._run,
@@ -128,10 +101,6 @@ class LatestFrameCapture:
 
     def latest(self, timeout: float = 2.0) -> Any:
         """Возвращает самый новый кадр, не отдавая устаревшую очередь."""
-        return self.latest_with_sequence(timeout)[0]
-
-    def latest_with_sequence(self, timeout: float = 2.0) -> tuple[Any, int]:
-        """Возвращает кадр и его номер, чтобы не обрабатывать дубликаты."""
         if not self._frame_ready.wait(timeout):
             raise RuntimeError("Камера не вернула кадр за отведённое время")
         with self._lock:
@@ -139,7 +108,7 @@ class LatestFrameCapture:
                 raise self._error
             if self._frame is None:
                 raise RuntimeError("Камера не вернула кадр")
-            return self._frame, self._sequence
+            return self._frame
 
     def _run(self) -> None:
         """Непрерывно читает камеру и заменяет старый кадр новым."""
@@ -150,7 +119,6 @@ class LatestFrameCapture:
                     raise RuntimeError("Камера не вернула кадр")
                 with self._lock:
                     self._frame = frame
-                    self._sequence += 1
                     self._frame_ready.set()
         except Exception as error:  # noqa: BLE001 — передаём ошибку главному потоку.
             with self._lock:
@@ -173,7 +141,6 @@ class LatestInferenceWorker:
         self._frame_ready = threading.Event()
         self._stop_requested = threading.Event()
         self._pending_frame: Any | None = None
-        self._pending_submitted_at = 0.0
         self._snapshot = InferenceSnapshot()
         self._error: RuntimeError | None = None
         self._thread = threading.Thread(
@@ -187,7 +154,6 @@ class LatestInferenceWorker:
         """Заменяет ожидающий кадр новым, чтобы не копить видеозадержку."""
         with self._lock:
             self._pending_frame = frame
-            self._pending_submitted_at = time.monotonic()
             self._frame_ready.set()
 
     def latest(self) -> InferenceSnapshot:
@@ -197,26 +163,23 @@ class LatestInferenceWorker:
                 raise self._error
             return self._snapshot
 
-    def _take_pending_frame(self) -> tuple[Any | None, float]:
+    def _take_pending_frame(self) -> Any | None:
         """Забирает единственный свежий кадр для обработки."""
         with self._lock:
             frame = self._pending_frame
-            submitted_at = self._pending_submitted_at
             self._pending_frame = None
-            self._pending_submitted_at = 0.0
             if frame is None:
                 self._frame_ready.clear()
-            return frame, submitted_at
+            return frame
 
     def _run(self) -> None:
         """Выполняет инференс последовательно в отдельном потоке."""
         while not self._stop_requested.is_set():
             if not self._frame_ready.wait(0.1):
                 continue
-            frame, submitted_at = self._take_pending_frame()
+            frame = self._take_pending_frame()
             if frame is None:
                 continue
-            started_at = time.monotonic()
             try:
                 detections = self._predict(frame)
             except Exception as error:  # noqa: BLE001 — ошибка должна дойти до главного потока.
@@ -227,8 +190,6 @@ class LatestInferenceWorker:
             with self._lock:
                 self._snapshot = InferenceSnapshot(
                     sequence=self._snapshot.sequence + 1,
-                    submitted_at=submitted_at,
-                    started_at=started_at,
                     completed_at=time.monotonic(),
                     detections=tuple(detections),
                 )

@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /bin/systemctl restart videot16.service

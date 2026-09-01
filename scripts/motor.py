@@ -19,7 +19,7 @@ NO_PROPS_CONFIRMED = True
 # Показывать ответы CLI для диагностики обмена.
 SHOW_RESPONSES = True
 # Уровни четырёх моторов: индексы Betaflight 0, 1, 2, 3.
-MOTOR_LEVELS = (1, 1, 3, 1)
+MOTOR_LEVELS = (1, 1, 5, 1)
 
 
 def read_prompt(port):

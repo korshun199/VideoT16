@@ -10,12 +10,13 @@ MSP_SET_OSD_CONFIG = 85
 MSP_OSD_CHAR_WRITE = 87
 OSD_CROSSHAIRS_INDEX = 2
 OSD_PROFILE_1_FLAG = 1 << 11
-OSD_MAX_X = 30
-OSD_MAX_Y = 15
+OSD_MAX_X = 29
+OSD_MAX_Y = 12
 OSD_CHAR_WIDTH = 12
 OSD_CHAR_HEIGHT = 18
 OSD_CHAR_BLACK = 0
 OSD_CHAR_TRANSPARENT = 1
+OSD_CHAR_WHITE = 2
 OSD_CROSSHAIR_GLYPHS = (0x72, 0x73, 0x74)
 
 
@@ -41,20 +42,32 @@ def build_set_position_packet(x: int, y: int, visible: bool = True) -> bytes:
 
 def set_crosshairs_position(serial_port, x: int, y: int, visible: bool = True) -> None:
     """Отправляет новую позицию прицела без сохранения во flash."""
-    serial_port.reset_input_buffer()
     serial_port.write(build_set_position_packet(x, y, visible))
     serial_port.flush()
 
 
 def build_box_glyphs() -> dict[int, bytes]:
-    """Создаёт три чёрных символа для прямоугольного указателя."""
-    glyphs = {address: [[OSD_CHAR_TRANSPARENT] * OSD_CHAR_WIDTH for _ in range(OSD_CHAR_HEIGHT)] for address in OSD_CROSSHAIR_GLYPHS}
+    """Создаёт белую рамку с чёрной окантовкой для штатного OSD."""
+    glyphs = {
+        address: [[OSD_CHAR_TRANSPARENT] * OSD_CHAR_WIDTH for _ in range(OSD_CHAR_HEIGHT)]
+        for address in OSD_CROSSHAIR_GLYPHS
+    }
+    # Горизонтальные стороны: чёрный контур и белая линия внутри.
     for address in OSD_CROSSHAIR_GLYPHS:
         for x in range(OSD_CHAR_WIDTH):
             glyphs[address][0][x] = OSD_CHAR_BLACK
+            glyphs[address][1][x] = OSD_CHAR_WHITE
+            glyphs[address][2][x] = OSD_CHAR_BLACK
             glyphs[address][OSD_CHAR_HEIGHT - 1][x] = OSD_CHAR_BLACK
-    for y in range(OSD_CHAR_HEIGHT):
+            glyphs[address][OSD_CHAR_HEIGHT - 2][x] = OSD_CHAR_WHITE
+            glyphs[address][OSD_CHAR_HEIGHT - 3][x] = OSD_CHAR_BLACK
+    # Вертикальные стороны: чёрный контур по обеим сторонам белой линии.
+    for y in range(3, OSD_CHAR_HEIGHT - 3):
         glyphs[OSD_CROSSHAIR_GLYPHS[0]][y][0] = OSD_CHAR_BLACK
+        glyphs[OSD_CROSSHAIR_GLYPHS[0]][y][1] = OSD_CHAR_WHITE
+        glyphs[OSD_CROSSHAIR_GLYPHS[0]][y][2] = OSD_CHAR_BLACK
+        glyphs[OSD_CROSSHAIR_GLYPHS[2]][y][OSD_CHAR_WIDTH - 3] = OSD_CHAR_BLACK
+        glyphs[OSD_CROSSHAIR_GLYPHS[2]][y][OSD_CHAR_WIDTH - 2] = OSD_CHAR_WHITE
         glyphs[OSD_CROSSHAIR_GLYPHS[2]][y][OSD_CHAR_WIDTH - 1] = OSD_CHAR_BLACK
 
     packed = {}

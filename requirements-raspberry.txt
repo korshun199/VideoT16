@@ -1,0 +1,16 @@
+# Зависимости автономного VideoT16 для Raspberry Pi 5 (ARM64).
+# Установка: python3 -m pip install -r requirements-raspberry.txt
+# OpenCV устанавливается отдельно системным пакетом:
+#   sudo apt install python3-opencv
+
+# Массивы кадров и подготовка изображения.
+numpy>=2.0,<3
+
+# Локальный CPU-инференс ONNX без PyTorch и Ultralytics.
+onnxruntime>=1.20,<2
+
+# Связь с полётником Betaflight по USB/UART.
+pyserial>=3.5,<4
+
+# Нужен ONNX Runtime для разбора версий и зависимостей.
+packaging>=24,<27
