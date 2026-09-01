@@ -867,6 +867,7 @@ def run(args: argparse.Namespace) -> int:
     last_target_confidence = 0.0
     last_status_log = 0.0
     last_osd_update = 0.0
+    telemetry = None
     runtime_mtime = args.settings.stat().st_mtime_ns if args.settings.exists() else None
     last_settings_check = 0.0
 
@@ -937,8 +938,14 @@ def run(args: argparse.Namespace) -> int:
                             visible=False,
                         )
                     osd_pointer_visible = False
-            # На J7 передаём чистый кадр: рамку рисует штатный OSD полётника.
-            annotated = frame.copy()
+            # На J7 рисуем отдельный программный OSD поверх цифрового кадра.
+            annotated = draw_detections(frame, tracked_detections)
+            if telemetry is not None:
+                draw_telemetry(annotated, telemetry, args.battery_capacity_mah)
+                draw_flight_status(annotated, telemetry)
+                draw_arm_banner(annotated, telemetry, now_monotonic)
+                draw_artificial_horizon(annotated, telemetry)
+            draw_system_status(annotated, system_status.text())
             if inav_reader and tracked_detections:
                 target = tracked_detections[0]
                 last_target_confidence = target.confidence
@@ -972,8 +979,8 @@ def run(args: argparse.Namespace) -> int:
                         flush=True,
                     )
             if inav_reader:
-                # Читаем MSP для связи, но штатный OSD уже находится в видеокадре.
-                inav_reader.update()
+                # Читаем MSP для собственного OSD и передачи координат.
+                telemetry = inav_reader.update() or telemetry
             now = time.monotonic()
             # Задержку сигнала считаем только по новым результатам нейросети.
             if inference.sequence != last_inference_sequence:
