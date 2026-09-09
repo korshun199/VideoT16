@@ -17,6 +17,7 @@ GENERIC_LABEL="1"
 HEADLESS="1"
 # Два выхода настраиваются отдельно в config/runtime_settings.json.
 J7_OUTPUT_ENABLED="1"
+J7_OVERLAY_ENABLED="1"
 FLIGHT_CONTROLLER_OSD_ENABLED="1"
 DRM_DEVICE="/dev/dri/by-path/platform-1f00144000.vec-card"
 FRAMEBUFFER_DEVICE=""
@@ -46,6 +47,10 @@ except (KeyError, OSError, TypeError, ValueError): print("1")
 ')"
 configured_fc_osd="$($PYTHON_BIN -c 'import json
 try: print("1" if json.load(open("config/runtime_settings.json", encoding="utf-8"))["video_output"].get("flight_controller_osd_enabled", True) else "0")
+except (KeyError, OSError, TypeError, ValueError): print("1")
+')"
+configured_j7_overlay="$($PYTHON_BIN -c 'import json
+try: print("1" if json.load(open("config/runtime_settings.json", encoding="utf-8"))["video_output"].get("j7_overlay_enabled", True) else "0")
 except (KeyError, OSError, TypeError, ValueError): print("1")
 ')"
 configured_drm="$($PYTHON_BIN -c 'import json
@@ -84,6 +89,9 @@ if [[ "$configured_fc_osd" == "0" ]]; then
 elif [[ "$configured_fc_osd" == "1" && -n "$configured_fc_port" ]]; then
     INAV_PORT="$configured_fc_port"
 fi
+if [[ "$configured_j7_overlay" == "0" ]]; then
+    J7_OVERLAY_ENABLED="0"
+fi
 
 # Веб-панель может выбрать только модель из каталога models.
 if [[ -f "config/runtime_settings.json" ]]; then
@@ -117,6 +125,9 @@ if [[ "$GENERIC_LABEL" == "1" ]]; then
 fi
 if [[ "$HEADLESS" == "1" ]]; then
     RUN_ARGS+=(--headless)
+fi
+if [[ "$J7_OVERLAY_ENABLED" == "0" ]]; then
+    RUN_ARGS+=(--j7-pass-through)
 fi
 if [[ -n "$DRM_DEVICE" ]]; then
     RUN_ARGS+=(--drm "$DRM_DEVICE")

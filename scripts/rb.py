@@ -80,7 +80,7 @@ FPS_КАМЕРЫ = 30
 # Служебную строку можно отключить.
 ПОКАЗЫВАТЬ_СТАТУС = True
 # Показывать ли штатные символы OSD, пришедшие от полётника.
-ПОКАЗЫВАТЬ_ШТАТНЫЙ_OSD = True
+ПОКАЗЫВАТЬ_ШТАТНЫЙ_OSD = False
 
 # Передавать ли нашу тестовую графику в OSD передатчика.
 ПЕРЕДАВАТЬ_НАШ_OSD = True
@@ -790,23 +790,33 @@ def main():
     global отправлено_пакетов
     global отправлено_наших_пакетов
 
-    ser = serial.Serial(
-        ПОРТ,
-        СКОРОСТЬ,
-        timeout=0
-    )
+    ser = None
+    ser_out = None
 
-    ser_out = serial.Serial(
-        ПОРТ_ВЫХОДА,
-        СКОРОСТЬ,
-        timeout=0,
-        write_timeout=1
-    )
+    try:
+        ser = serial.Serial(
+            ПОРТ,
+            СКОРОСТЬ,
+            timeout=0
+        )
+    except serial.SerialException:
+        print(f"OSD вход не подключён: {ПОРТ}; работаю локально")
 
-    print(
-        f"OSD вход: {ПОРТ}; OSD выход: {ПОРТ_ВЫХОДА}; "
-        "прозрачная передача включена"
-    )
+    try:
+        ser_out = serial.Serial(
+            ПОРТ_ВЫХОДА,
+            СКОРОСТЬ,
+            timeout=0,
+            write_timeout=1
+        )
+    except serial.SerialException:
+        print(f"OSD выход не подключён: {ПОРТ_ВЫХОДА}; работаю локально")
+
+    if ser is not None and ser_out is not None:
+        print(
+            f"OSD вход: {ПОРТ}; OSD выход: {ПОРТ_ВЫХОДА}; "
+            "прозрачная передача включена"
+        )
 
     камера = открыть_камеру()
 
@@ -866,9 +876,7 @@ def main():
             # UART / MSP DISPLAYPORT
             # ------------------------------------------------
 
-            данные = ser.read(
-                4096
-            )
+            данные = ser.read(4096) if ser is not None else b""
 
             if данные:
 
@@ -927,8 +935,9 @@ def main():
 
                 # Передаём только проверенный полный пакет без изменения.
                 серый_пакет = bytes(буфер[:размер])
-                ser_out.write(серый_пакет)
-                отправлено_пакетов += 1
+                if ser_out is not None:
+                    ser_out.write(серый_пакет)
+                    отправлено_пакетов += 1
 
                 пакетов += 1
 
@@ -940,7 +949,7 @@ def main():
                     )
 
                     # После штатного DRAW SCREEN добавляем нашу метку.
-                    if payload and payload[0] == 4:
+                    if ser_out is not None and payload and payload[0] == 4:
                         отправлено_наших_пакетов += отправить_нашу_метку(
                             ser_out
                         )
@@ -967,8 +976,10 @@ def main():
     finally:
 
         камера.release()
-        ser.close()
-        ser_out.close()
+        if ser is not None:
+            ser.close()
+        if ser_out is not None:
+            ser_out.close()
         pygame.quit()
 
 

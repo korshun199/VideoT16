@@ -21,15 +21,24 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "inference_interval": 2,
         "generic_label": True,
     },
+    "camera": {
+        "v4l2_controls_enabled": False,
+        "brightness": 0.0,
+        "contrast": 1.0,
+        "sharpness": 1.0,
+        "saturation": 1.0,
+        "digital_zoom": 1.0,
+    },
     "video_output": {
         "j7_enabled": True,
+        "j7_overlay_enabled": True,
         "flight_controller_osd_enabled": True,
         "drm_device": "/dev/dri/by-path/platform-1f00144000.vec-card",
         "flight_controller_port": "/dev/ttyACM0",
     },
     "object": {
         "font": "FONT_HERSHEY_SIMPLEX",
-        "font_scale": 0.7,
+        "font_scale": 1.4,
         "text_thickness": 2,
         "box_thickness": 2,
         "color_rgb": [0, 255, 0],
@@ -146,6 +155,8 @@ def save_settings(settings: dict[str, Any], path: Path = SETTINGS_PATH) -> dict[
     video_output = normalized["video_output"]
     if not isinstance(video_output["j7_enabled"], bool):
         raise ValueError("video_output.j7_enabled должен быть true или false")
+    if not isinstance(video_output["j7_overlay_enabled"], bool):
+        raise ValueError("video_output.j7_overlay_enabled должен быть true или false")
     if not isinstance(video_output["flight_controller_osd_enabled"], bool):
         raise ValueError("video_output.flight_controller_osd_enabled должен быть true или false")
     for key in ("drm_device", "flight_controller_port"):

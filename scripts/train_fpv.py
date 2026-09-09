@@ -16,16 +16,16 @@ sys.path.insert(0, str(PROJECT_DIR))
 os.environ.setdefault("MPLCONFIGDIR", str(PROJECT_DIR / ".cache/matplotlib"))
 (PROJECT_DIR / ".cache/matplotlib").mkdir(parents=True, exist_ok=True)
 
-# Исходные размеченные фотографии.
-SOURCE_IMAGES = PROJECT_DIR / "dataset/fpv/images/annotated"
-# Исходные YOLO-разметки.
-SOURCE_LABELS = PROJECT_DIR / "dataset/fpv/labels/annotated"
+# Подготовленная объединённая выборка старых и новых кадров.
+SOURCE_IMAGES = PROJECT_DIR / "dataset/fpv/organized/images"
+# Нормализованные YOLO-разметки той же выборки.
+SOURCE_LABELS = PROJECT_DIR / "dataset/fpv/organized/labels"
 # Рабочий каталог для разбиения train/val.
 GENERATED_DIR = PROJECT_DIR / "dataset/fpv/generated"
 # Готовая базовая модель FPV.
 BASE_MODEL = PROJECT_DIR / "models/fpv_drone_best.pt"
 # Название результата обучения; исходная модель не перезаписывается.
-RUN_NAME = "fpv_quadcopter_custom"
+RUN_NAME = "fpv_quadcopter_merged"
 # Размер изображения для обучения.
 IMAGE_SIZE = 640
 # Количество эпох.
@@ -36,6 +36,23 @@ BATCH_SIZE = 4
 VAL_RATIO = 0.2
 # Повторяемое разбиение.
 RANDOM_SEED = 42
+# Доля CPU для обучения; остальное остаётся системе и обычной работе.
+CPU_FRACTION = 0.8
+
+
+def configure_cpu_limit() -> None:
+    """Ограничивает процесс обучения примерно 80 процентами CPU."""
+    cpu_count = os.cpu_count() or 1
+    allowed_count = max(1, int(cpu_count * CPU_FRACTION))
+    try:
+        os.sched_setaffinity(0, set(range(allowed_count)))
+    except (AttributeError, OSError):
+        # На системах без sched_setaffinity оставляем ограничение потоками.
+        pass
+    os.environ["OMP_NUM_THREADS"] = str(allowed_count)
+    os.environ["MKL_NUM_THREADS"] = str(allowed_count)
+    os.environ["OPENBLAS_NUM_THREADS"] = str(allowed_count)
+    print(f"Ограничение CPU: {allowed_count}/{cpu_count} логических ядер ({CPU_FRACTION:.0%})")
 
 
 def prepare_dataset() -> Path:
@@ -91,6 +108,7 @@ def main() -> int:
     """Обучает модель и экспортирует лучший результат в ONNX."""
     if not BASE_MODEL.is_file():
         raise RuntimeError(f"Базовая модель не найдена: {BASE_MODEL}")
+    configure_cpu_limit()
     data_path = prepare_dataset()
     from ultralytics import YOLO
 

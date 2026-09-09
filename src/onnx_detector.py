@@ -12,13 +12,28 @@ import onnxruntime as ort
 from src.realtime import Detection
 
 
+# Русские подписи классов FPV-модели.
+RUSSIAN_DRONE_LABELS = {
+    "quadcopter": "BABA YAGA",
+    "fixed-wing": "AVIA DRON",
+}
+
+
 class OnnxDetector:
     """Запускает экспортированную YOLO-модель без Torch и Ultralytics."""
 
-    def __init__(self, path: Path, confidence: float, generic_label: bool, size: int) -> None:
+    def __init__(
+        self,
+        path: Path,
+        confidence: float,
+        generic_label: bool,
+        size: int,
+        object_label: str | None = None,
+    ) -> None:
         self.confidence = confidence
         self.generic_label = generic_label
         self.size = size
+        self.object_label = object_label
         # Лучшая вероятность текущего кадра, включая кандидатов ниже порога.
         self.last_best_confidence = 0.0
         # Ограничиваем параллелизм: поток камеры и SSH должны оставаться отзывчивыми.
@@ -26,6 +41,10 @@ class OnnxDetector:
         options.intra_op_num_threads = 1
         options.inter_op_num_threads = 1
         options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        # В ONNX Runtime 1.29 слияние QuickGelu аварийно завершает процесс
+        # на этой модели. Отключаем небезопасные графические оптимизации:
+        # обычный инференс остаётся рабочим, а модель не изменяется.
+        options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
         self.session = ort.InferenceSession(
             str(path), options, providers=["CPUExecutionProvider"]
         )
@@ -67,6 +86,14 @@ class OnnxDetector:
         result = []
         for index in np.array(indices).reshape(-1):
             x, y, w, h = boxes[int(index)]
-            name = "OBJECT" if self.generic_label else self.names.get(kept_ids[int(index)], "OBJECT")
+            if self.generic_label:
+                name = "OBJECT"
+            elif self.object_label:
+                name = self.object_label
+            else:
+                # У FPV-модели один класс; при отсутствии имён в ONNX
+                # используем понятную подпись вместо служебного OBJECT.
+                model_name = self.names.get(kept_ids[int(index)], "quadcopter")
+                name = RUSSIAN_DRONE_LABELS.get(model_name, model_name)
             result.append(Detection(x, y, min(width, x + w), min(height, y + h), name, kept_scores[int(index)]))
         return tuple(result)

@@ -113,19 +113,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--settings", type=Path, default=Path("config/runtime_settings.json"), help="Файл настроек оператора")
     parser.add_argument("--labels", choices=("ru", "en"), default="ru", help="Язык подписей объектов")
     parser.add_argument("--generic-label", action="store_true", help="Показывать для всех объектов подпись OBJECT")
+    parser.add_argument("--object-label", help="Фиксированная подпись обнаруженного объекта")
     parser.add_argument("--confidence", type=float, default=0.35, help="Минимальная уверенность 0..1")
     parser.add_argument("-p", "--percent", "--confidence-percent", dest="confidence_percent", type=float, help="Минимальная уверенность в процентах 0..100")
     parser.add_argument("--device", default="cpu", help="Устройство: cpu или auto для RKNN")
     parser.add_argument(
         "--inference-size",
         type=int,
-        default=640,
+        default=None,
         help="Размер стороны изображения для YOLO, например 320 или 640",
     )
     parser.add_argument(
         "--inference-interval",
         type=int,
-        default=1,
+        default=None,
         help="Запускать инференс на каждом N-м кадре",
     )
     parser.add_argument(
@@ -146,6 +147,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", type=Path, help="Путь записи обработанного видео")
     parser.add_argument("--snapshot-dir", type=Path, default=Path("snapshots"))
     parser.add_argument("--headless", action="store_true", help="Работать без окна предпросмотра")
+    parser.add_argument(
+        "--j7-pass-through",
+        action="store_true",
+        help="Передавать исходный кадр на J7 без собственной графики",
+    )
     parser.add_argument(
         "--framebuffer",
         nargs="?",
@@ -207,7 +213,7 @@ def create_writer(path: Path, capture: cv2.VideoCapture) -> cv2.VideoWriter:
 class PicameraCapture:
     """Адаптер Picamera2 с интерфейсом, совместимым с OpenCV-захватом."""
 
-    def __init__(self, camera_fps: float = 25.0) -> None:
+    def __init__(self, camera_fps: float = 25.0, camera_settings: dict | None = None) -> None:
         """Запускает сенсор Raspberry Pi в цветном режиме RGB888."""
         import cv2
         from picamera2 import Picamera2
@@ -224,6 +230,35 @@ class PicameraCapture:
         self._camera.configure(configuration)
         self._camera.start()
         self._cv2 = cv2
+        self.apply_settings(camera_settings or {})
+
+    def apply_settings(self, settings: dict) -> None:
+        """Применяет яркость, контраст, резкость, насыщенность и цифровой зум."""
+        controls = {}
+        for name in ("Brightness", "Contrast", "Sharpness", "Saturation"):
+            key = name.lower()
+            if key in settings:
+                controls[name] = float(settings[key])
+        if controls:
+            try:
+                self._camera.set_controls(controls)
+            except (RuntimeError, ValueError):
+                # Конкретный сенсор может не поддерживать отдельный контроль.
+                pass
+        try:
+            zoom = max(1.0, min(4.0, float(settings.get("digital_zoom", 1.0))))
+            if zoom <= 1.001:
+                return
+            sensor_width, sensor_height = self._camera.camera_properties["PixelArraySize"]
+            crop_width = int(sensor_width / zoom)
+            crop_height = int(crop_width * 9 / 16)
+            crop_height = min(crop_height, int(sensor_height / zoom))
+            left = (sensor_width - crop_width) // 2
+            top = (sensor_height - crop_height) // 2
+            self._camera.set_controls({"ScalerCrop": (left, top, crop_width, crop_height)})
+        except (KeyError, RuntimeError, TypeError, ValueError):
+            # Цифровой зум зависит от возможностей сенсора и безопасно остаётся 1x.
+            pass
 
     def isOpened(self) -> bool:  # noqa: N802 — интерфейс OpenCV.
         """Сообщает, что поток Picamera2 запущен."""
@@ -254,18 +289,18 @@ class PicameraCapture:
         self._camera.close()
 
 
-def open_capture(source: int | str):
+def open_capture(source: int | str, camera_settings: dict | None = None):
     """Открывает Picamera2, USB-камеру через V4L2 или сетевой поток."""
     import cv2
 
     if source == "picamera":
-        return PicameraCapture()
+        return PicameraCapture(camera_settings=camera_settings)
     if isinstance(source, int) or (isinstance(source, str) and source.startswith("/dev/video")):
         return cv2.VideoCapture(source, cv2.CAP_V4L2)
     return cv2.VideoCapture(source)
 
 
-def configure_low_latency_capture(capture, camera_fps: float = 0) -> None:
+def configure_low_latency_capture(capture, camera_fps: float = 0, camera_settings: dict | None = None) -> None:
     """Настраивает V4L2 на минимальную очередь и MJPEG без принуждения разрешения."""
     import cv2
 
@@ -277,6 +312,15 @@ def configure_low_latency_capture(capture, camera_fps: float = 0) -> None:
     capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     if camera_fps > 0:
         capture.set(cv2.CAP_PROP_FPS, camera_fps)
+    # Значения веб-панели имеют диапазоны CSI/Picamera2 (0..1), а EasyCap
+    # использует свои аппаратные диапазоны 0..255. Не отправляем их в V4L2
+    # без отдельного явного разрешения, иначе EasyCap становится чёрным.
+    if not camera_settings or not camera_settings.get("v4l2_controls_enabled", False):
+        return
+    for key, prop in (("brightness", cv2.CAP_PROP_BRIGHTNESS), ("contrast", cv2.CAP_PROP_CONTRAST),
+                      ("sharpness", cv2.CAP_PROP_SHARPNESS), ("saturation", cv2.CAP_PROP_SATURATION)):
+        if camera_settings and key in camera_settings:
+            capture.set(prop, float(camera_settings[key]))
 
 
 def resolve_source(source: int | str) -> int | str:
@@ -319,14 +363,20 @@ def play_alert(path: Path) -> subprocess.Popen[bytes] | None:
     return None
 
 
-def extract_detections(result, generic_label: bool = False) -> tuple[Detection, ...]:
+def extract_detections(result, generic_label: bool = False, object_label: str | None = None) -> tuple[Detection, ...]:
     """Отделяет координаты рамок от объекта результата Ultralytics."""
     detections = []
     for box in result.boxes:
         x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
         class_id = int(box.cls[0])
         confidence = float(box.conf[0])
-        name = "OBJECT" if generic_label else result.names[class_id]
+        if generic_label:
+            name = "OBJECT"
+        elif object_label:
+            name = object_label
+        else:
+            # Для одноклассовой FPV-модели сохраняем понятное имя класса.
+            name = result.names.get(class_id, "BABA YAGA")
         detections.append(Detection(x1, y1, x2, y2, str(name), confidence))
     return tuple(detections)
 
@@ -337,24 +387,39 @@ def draw_detections(frame, detections: tuple[Detection, ...]):
 
     # Копия сохраняет исходный кадр неизменным для фонового распознавания.
     annotated = frame.copy()
+    frame_height, frame_width = annotated.shape[:2]
     for detection in detections:
         label = f"{detection.name} {detection.confidence * 100:.0f}%"
         object_font = getattr(cv2, OBJECT_STYLE["font"])
+        # Показываем фиксированный указатель вокруг центра детекции, а не
+        # сырые границы YOLO: ошибочная гигантская рамка больше не закрывает
+        # изображение. Координаты штатного Betaflight OSD считаются отдельно
+        # по исходной детекции и остаются без изменений.
+        center_x = (detection.x1 + detection.x2) // 2
+        center_y = (detection.y1 + detection.y2) // 2
+        marker_size = max(
+            8,
+            int(min(frame_width, frame_height) * OBJECT_STYLE["marker_size_ratio"]),
+        )
+        x1 = max(0, center_x - marker_size // 2)
+        y1 = max(0, center_y - marker_size // 2)
+        x2 = min(frame_width - 1, x1 + marker_size)
+        y2 = min(frame_height - 1, y1 + marker_size)
         cv2.rectangle(
             annotated,
-            (detection.x1, detection.y1),
-            (detection.x2, detection.y2),
-            OBJECT_STYLE["color"],
+            (x1, y1),
+            (x2, y2),
+            OBJECT_STYLE["marker_color"],
             OBJECT_STYLE["box_thickness"],
         )
         text_y = max(
-            detection.y1 - OBJECT_STYLE["text_offset_y"],
+            y1 - OBJECT_STYLE["text_offset_y"],
             OBJECT_STYLE["text_min_y"],
         )
         cv2.putText(
             annotated,
             label,
-            (detection.x1, text_y),
+            (x1, text_y),
             object_font,
             OBJECT_STYLE["font_scale"],
             OBJECT_STYLE["color"],
@@ -700,6 +765,11 @@ def black_background(frame, target_width: int, target_height: int):
 
 def run(args: argparse.Namespace) -> int:
     """Запускает захват, локальный инференс и отображение результата."""
+    # Запоминаем, был ли порог задан явно при запуске.
+    # Явный параметр командной строки не должен затираться файлом настроек.
+    confidence_from_command_line = args.confidence_percent is not None
+    inference_size_from_command_line = args.inference_size is not None
+    inference_interval_from_command_line = args.inference_interval is not None
     model_path = Path(args.model)
     if not model_path.is_file():
         raise FileNotFoundError(f"Локальная модель не найдена: {model_path}. Положите веса в этот путь.")
@@ -717,9 +787,13 @@ def run(args: argparse.Namespace) -> int:
         },
     )
     detection_settings = runtime_settings["detection"]
-    args.confidence_percent = float(detection_settings["confidence_percent"])
-    args.inference_size = int(detection_settings["inference_size"])
-    args.inference_interval = int(detection_settings["inference_interval"])
+    camera_settings = runtime_settings["camera"]
+    if not confidence_from_command_line:
+        args.confidence_percent = float(detection_settings["confidence_percent"])
+    if not inference_size_from_command_line:
+        args.inference_size = int(detection_settings["inference_size"])
+    if not inference_interval_from_command_line:
+        args.inference_interval = int(detection_settings["inference_interval"])
     args.generic_label = bool(detection_settings["generic_label"])
     if args.confidence_percent is not None:
         if not 0 < args.confidence_percent <= 100:
@@ -774,6 +848,7 @@ def run(args: argparse.Namespace) -> int:
             args.confidence,
             args.generic_label,
             args.inference_size,
+            args.object_label,
         )
     else:
         model = YOLO(str(model_path))
@@ -781,7 +856,7 @@ def run(args: argparse.Namespace) -> int:
         names = dict(model.model.names)
         class_count = len(names)
         if class_count == 1:
-            model.model.names = {0: "Фипик"}
+            model.model.names = {0: "КВАДРОКОПТЕР"}
         elif class_count == len(RUSSIAN_LABELS):
             model.model.names = dict(enumerate(RUSSIAN_LABELS))
         else:
@@ -792,10 +867,10 @@ def run(args: argparse.Namespace) -> int:
                 for index, name in names.items()
             }
     print("Модель загружена. Открываю камеру...", flush=True)
-    capture = open_capture(resolve_source(parse_source(args.source)))
+    capture = open_capture(resolve_source(parse_source(args.source)), camera_settings)
     if not capture.isOpened():
         raise RuntimeError(f"Не удалось открыть источник камеры: {args.source}")
-    configure_low_latency_capture(capture, args.camera_fps)
+    configure_low_latency_capture(capture, args.camera_fps, camera_settings)
     print(
         f"Камера: {int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
         f"{int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))}, "
@@ -855,7 +930,7 @@ def run(args: argparse.Namespace) -> int:
         if onnx_detector is not None:
             return onnx_detector(frame)
         result = model.predict(frame, **predict_args)[0]
-        return extract_detections(result, args.generic_label)
+        return extract_detections(result, args.generic_label, args.object_label)
 
     inference_worker = LatestInferenceWorker(predict_frame)
     tracker = DetectionTracker()
@@ -877,9 +952,14 @@ def run(args: argparse.Namespace) -> int:
         nonlocal runtime_mtime
         settings = load_settings(args.settings)
         detection = settings["detection"]
-        args.confidence = max(0.01, min(1.0, float(detection["confidence_percent"]) / 100))
-        args.inference_size = max(32, int(detection["inference_size"]))
-        args.inference_interval = max(1, int(detection["inference_interval"]))
+        camera = settings["camera"]
+        if not confidence_from_command_line:
+            args.confidence_percent = float(detection["confidence_percent"])
+            args.confidence = max(0.01, min(1.0, args.confidence_percent / 100))
+        if not inference_size_from_command_line:
+            args.inference_size = max(32, int(detection["inference_size"]))
+        if not inference_interval_from_command_line:
+            args.inference_interval = max(1, int(detection["inference_interval"]))
         args.generic_label = bool(detection["generic_label"])
         predict_args["conf"] = args.confidence
         predict_args["imgsz"] = args.inference_size
@@ -899,6 +979,8 @@ def run(args: argparse.Namespace) -> int:
             onnx_detector.confidence = args.confidence
             onnx_detector.size = args.inference_size
             onnx_detector.generic_label = args.generic_label
+        if isinstance(capture, PicameraCapture):
+            capture.apply_settings(camera)
         runtime_mtime = args.settings.stat().st_mtime_ns if args.settings.exists() else None
 
     frame_number = 0
@@ -939,14 +1021,18 @@ def run(args: argparse.Namespace) -> int:
                             visible=False,
                         )
                     osd_pointer_visible = False
-            # На J7 рисуем отдельный программный OSD поверх цифрового кадра.
-            annotated = draw_detections(frame, tracked_detections)
-            if telemetry is not None:
-                draw_telemetry(annotated, telemetry, args.battery_capacity_mah)
-                draw_flight_status(annotated, telemetry)
-                draw_arm_banner(annotated, telemetry, now_monotonic)
-                draw_artificial_horizon(annotated, telemetry)
-            draw_system_status(annotated, system_status.text())
+            # В pass-through на J7 идёт исходный кадр со штатным OSD
+            # полётника; координаты цели ниже по-прежнему отправляются в MSP.
+            if args.j7_pass_through:
+                annotated = frame.copy()
+            else:
+                annotated = draw_detections(frame, tracked_detections)
+                if telemetry is not None:
+                    draw_telemetry(annotated, telemetry, args.battery_capacity_mah)
+                    draw_flight_status(annotated, telemetry)
+                    draw_arm_banner(annotated, telemetry, now_monotonic)
+                    draw_artificial_horizon(annotated, telemetry)
+                draw_system_status(annotated, system_status.text())
             if inav_reader and tracked_detections:
                 target = tracked_detections[0]
                 last_target_confidence = target.confidence

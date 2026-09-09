@@ -74,6 +74,16 @@
       <p class="hint">После смены источника нажми «Сохранить видео и перезапустить».</p>
       <button onclick="saveVideoAndRestart()">Сохранить видео и перезапустить</button>
     </section>
+    <section><h2>Настройки камеры</h2>
+      <div class="grid">
+        <label>Яркость<input id="camera_brightness" type="number" min="-1" max="1" step="0.05"></label>
+        <label>Контраст<input id="camera_contrast" type="number" min="0" max="2" step="0.05"></label>
+        <label>Резкость<input id="camera_sharpness" type="number" min="0" max="2" step="0.05"></label>
+        <label>Насыщенность<input id="camera_saturation" type="number" min="0" max="2" step="0.05"></label>
+        <label>Цифровое увеличение<input id="camera_digital_zoom" type="number" min="1" max="4" step="0.1"></label>
+      </div>
+      <p class="hint">Для CSI-камеры настройки применяются примерно за секунду. Увеличение цифровое и уменьшает поле зрения. EasyCap может поддерживать не все параметры.</p>
+    </section>
     <section><h2>Выходы видео и координат</h2>
       <div class="grid">
         <label>Наше видео с рамкой на J7<select id="j7_enabled"><option value="true">Включено</option><option value="false">Выключено</option></select></label>
@@ -154,7 +164,7 @@
     const hexRgb = (hex) => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
     function showTab(name, button) { document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.toggle('active', panel.id === 'tab-' + name)); document.querySelectorAll('.menu button').forEach(item => item.classList.toggle('active', item === button)); }
     const fields = {
-      confidence_percent: ['detection', 'confidence_percent'], inference_size: ['detection', 'inference_size'], inference_interval: ['detection', 'inference_interval'], generic_label: ['detection', 'generic_label'], camera_source: ['detection', 'camera_source'], digital_camera_device: ['detection', 'digital_camera_device'], j7_enabled: ['video_output', 'j7_enabled'], flight_controller_osd_enabled: ['video_output', 'flight_controller_osd_enabled'], drm_device: ['video_output', 'drm_device'], flight_controller_port: ['video_output', 'flight_controller_port'],
+      confidence_percent: ['detection', 'confidence_percent'], inference_size: ['detection', 'inference_size'], inference_interval: ['detection', 'inference_interval'], generic_label: ['detection', 'generic_label'], camera_source: ['detection', 'camera_source'], digital_camera_device: ['detection', 'digital_camera_device'], camera_brightness: ['camera', 'brightness'], camera_contrast: ['camera', 'contrast'], camera_sharpness: ['camera', 'sharpness'], camera_saturation: ['camera', 'saturation'], camera_digital_zoom: ['camera', 'digital_zoom'], j7_enabled: ['video_output', 'j7_enabled'], flight_controller_osd_enabled: ['video_output', 'flight_controller_osd_enabled'], drm_device: ['video_output', 'drm_device'], flight_controller_port: ['video_output', 'flight_controller_port'],
       object_font: ['object', 'font'], object_font_scale: ['object', 'font_scale'], box_thickness: ['object', 'box_thickness'], object_text_thickness: ['object', 'text_thickness'], object_color_rgb: ['object', 'color_rgb'], object_text_min_y: ['object', 'text_min_y'], object_text_offset_y: ['object', 'text_offset_y'],
       osd_font: ['osd_text', 'font'], osd_font_scale: ['osd_text', 'font_scale'], osd_thickness: ['osd_text', 'thickness'], osd_shadow_thickness: ['osd_text', 'shadow_thickness'], osd_color_rgb: ['osd_text', 'color_rgb'], osd_left: ['osd_text', 'left'], osd_top: ['osd_text', 'top'], osd_line_spacing: ['osd_text', 'line_spacing'], osd_shadow_offset_x: ['osd_text', 'shadow_offset_x'], osd_shadow_offset_y: ['osd_text', 'shadow_offset_y'],
       system_status_font: ['system_status', 'font'], system_status_font_scale: ['system_status', 'font_scale'], system_status_thickness: ['system_status', 'thickness'], system_status_shadow_thickness: ['system_status', 'shadow_thickness'], system_status_color_rgb: ['system_status', 'color_rgb'], system_status_left: ['system_status', 'left'], system_status_bottom: ['system_status', 'bottom'],

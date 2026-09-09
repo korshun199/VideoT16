@@ -1,15 +1,16 @@
 {
   "detection": {
     "model_path": "models/fpv_drone_custom_320.onnx",
-    "camera_source": "digital",
-    "digital_camera_device": "/dev/video0",
+    "camera_source": "easycap",
+    "digital_camera_device": "",
     "confidence_percent": 20,
     "inference_size": 320,
     "inference_interval": 2,
-    "generic_label": true
+    "generic_label": false
   },
   "video_output": {
     "j7_enabled": true,
+    "j7_overlay_enabled": false,
     "flight_controller_osd_enabled": true,
     "drm_device": "/dev/dri/by-path/platform-1f00144000.vec-card",
     "flight_controller_port": "/dev/ttyACM0"
