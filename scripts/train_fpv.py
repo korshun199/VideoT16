@@ -16,16 +16,18 @@ sys.path.insert(0, str(PROJECT_DIR))
 os.environ.setdefault("MPLCONFIGDIR", str(PROJECT_DIR / ".cache/matplotlib"))
 (PROJECT_DIR / ".cache/matplotlib").mkdir(parents=True, exist_ok=True)
 
-# Подготовленная объединённая выборка старых и новых кадров.
-SOURCE_IMAGES = PROJECT_DIR / "dataset/fpv/organized/images"
-# Нормализованные YOLO-разметки той же выборки.
-SOURCE_LABELS = PROJECT_DIR / "dataset/fpv/organized/labels"
+# Источники размеченных кадров: прежняя выборка и новый импорт с флешки.
+SOURCE_ROOTS = (
+    PROJECT_DIR / "dataset/fpv/organized",
+    PROJECT_DIR / "dataset/fpv/incoming_flash_20260911",
+)
 # Рабочий каталог для разбиения train/val.
 GENERATED_DIR = PROJECT_DIR / "dataset/fpv/generated"
 # Готовая базовая модель FPV.
 BASE_MODEL = PROJECT_DIR / "models/fpv_drone_best.pt"
 # Название результата обучения; исходная модель не перезаписывается.
-RUN_NAME = "fpv_quadcopter_merged"
+# Отдельная папка результата: прежние ONNX-модели для Raspberry не затираются.
+RUN_NAME = "fpv_quadcopter_merged_20260911"
 # Размер изображения для обучения.
 IMAGE_SIZE = 640
 # Количество эпох.
@@ -57,11 +59,18 @@ def configure_cpu_limit() -> None:
 
 def prepare_dataset() -> Path:
     """Создаёт train/val через символические ссылки без копирования фото."""
-    image_files = sorted(
-        path for path in SOURCE_IMAGES.iterdir()
-        if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}
-    )
-    pairs = [path for path in image_files if (SOURCE_LABELS / f"{path.stem}.txt").is_file()]
+    pairs: list[tuple[Path, Path]] = []
+    for source_root in SOURCE_ROOTS:
+        image_dir = source_root / "images"
+        label_dir = source_root / "labels"
+        if not image_dir.is_dir() or not label_dir.is_dir():
+            continue
+        for image_path in sorted(image_dir.iterdir()):
+            if image_path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
+                continue
+            label_path = label_dir / f"{image_path.stem}.txt"
+            if label_path.is_file():
+                pairs.append((image_path, label_path))
     if len(pairs) < 2:
         raise RuntimeError("Нужно минимум две фотографии с YOLO-разметкой")
 
@@ -81,12 +90,17 @@ def prepare_dataset() -> Path:
         label_dir = GENERATED_DIR / "labels" / split
         image_dir.mkdir(parents=True, exist_ok=True)
         label_dir.mkdir(parents=True, exist_ok=True)
-        for image_path in files:
-            image_link = image_dir / image_path.name
-            label_link = label_dir / f"{image_path.stem}.txt"
+        for image_path, label_path in files:
+            # Импорт уже имеет уникальные имена; для случайного совпадения
+            # имён добавляем имя источника, не перезаписывая другой кадр.
+            destination_name = image_path.name
+            image_link = image_dir / destination_name
+            if image_link.exists() and image_link.resolve() != image_path.resolve():
+                destination_name = f"{image_path.parent.parent.name}_{image_path.name}"
+                image_link = image_dir / destination_name
+            label_link = label_dir / f"{Path(destination_name).stem}.txt"
             if not image_link.exists():
                 image_link.symlink_to(image_path.resolve())
-            label_path = SOURCE_LABELS / f"{image_path.stem}.txt"
             if not label_link.exists():
                 label_link.symlink_to(label_path.resolve())
 

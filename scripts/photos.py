@@ -20,9 +20,9 @@ from src.onnx_detector import OnnxDetector
 # ============================================================
 
 КОРЕНЬ = Path(__file__).resolve().parent
-КАТАЛОГ_ФОТО = КОРЕНЬ / "dataset/fpv/object_photos/images"
-МОДЕЛЬ = КОРЕНЬ / "runs/fpv_training/fpv_quadcopter_merged/weights/best.onnx"
-КАТАЛОГ_ВИДЕО = КОРЕНЬ / "dataset/fpv/object_photos/videos"
+КАТАЛОГ_ФОТО = КОРЕНЬ / "../dataset/fpv/object_photos/images"
+МОДЕЛЬ = КОРЕНЬ / "../runs/fpv_training/fpv_quadcopter_merged/weights/best.onnx"
+КАТАЛОГ_ВИДЕО = КОРЕНЬ / "../dataset/fpv/object_photos/videos"
 
 ВИДЕО_БЕЗ_РАСПОЗНАВАНИЯ = КАТАЛОГ_ВИДЕО / "clean.mp4"
 ВИДЕО_С_РАСПОЗНАВАНИЕМ = КАТАЛОГ_ВИДЕО / "detected.mp4"

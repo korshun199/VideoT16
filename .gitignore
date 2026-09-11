@@ -24,6 +24,9 @@ dataset/my_cat/labels/val/*.txt
 dataset/objects/
 runs/
 .env
+SECURITY.md
+security_local/
+security/
 reports/performance/*.txt
 arm64-lab/images/*
 !arm64-lab/images/.gitkeep
@@ -36,5 +39,11 @@ dataset/fpv/images/from_videos/
 dataset/fpv/images/annotated/
 dataset/fpv/labels/annotated/
 dataset/fpv/generated/
+# Импорты с носителей, кадры и результаты локального обучения не публикуются.
+dataset/fpv/flash_archive/
+dataset/fpv/incoming_flash_*/
+dataset/fpv/object_photos/
+dataset/fpv/organized/
+dataset/fpv_windows_import/
 :memory:.ses
 pymysql

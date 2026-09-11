@@ -10,7 +10,7 @@
       "request": "launch",
       "program": "${file}",
       "console": "integratedTerminal",
-      "args": ["1","1","1","1"],
+      "args": ["1", "1", "1", "1"]
     },
     {
       "name": "Python Debugger: Python File",
