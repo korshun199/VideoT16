@@ -12,7 +12,7 @@
     "j7_enabled": false,
     "j7_overlay_enabled": false,
     "flight_controller_osd_enabled": false,
-    "drm_device": "/dev/dri/by-path/platform-1f00144000.vec-card",
+    "drm_device": "/dev/dri/card1",
     "flight_controller_port": "/dev/ttyACM0"
   },
   "object": {
