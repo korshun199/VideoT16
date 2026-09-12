@@ -1,6 +1,6 @@
 {
   "detection": {
-    "model_path": "models/fpv_drone_custom_320.onnx",
+    "model_path": "models/fpv_drone_latest.onnx",
     "camera_source": "easycap",
     "digital_camera_device": "",
     "confidence_percent": 20,

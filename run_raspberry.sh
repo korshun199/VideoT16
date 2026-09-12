@@ -4,11 +4,16 @@ set -Eeuo pipefail
 
 # Настройки безопасного запуска VideoT16 на Raspberry Pi 5.
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
+# Окружение остаётся открытым на Raspberry, а код после расшифровки работает из RAM.
+if [[ -x "/home/oleg/VideoT16/.venv/bin/python" ]]; then
+    PYTHON_BIN="/home/oleg/VideoT16/.venv/bin/python"
+else
+    PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
+fi
 CAMERA_SOURCE="/dev/video0"
 CAMERA_INPUT="easycap"
 DIGITAL_CAMERA_DEVICE=""
-MODEL_PATH="models/fpv_drone_custom_320.onnx"
+MODEL_PATH="models/fpv_drone_latest.onnx"
 CONFIDENCE_PERCENT="20"
 INFERENCE_SIZE="320"
 INFERENCE_INTERVAL="2"
@@ -100,11 +105,11 @@ import json, sys
 try:
     value = json.load(open("config/runtime_settings.json", encoding="utf-8"))["detection"]["model_path"]
 except (KeyError, OSError, TypeError, ValueError):
-    value = "models/fpv_drone_custom_320.onnx"
+    value = "models/fpv_drone_latest.onnx"
 if value.startswith("models/") and value.endswith(".onnx") and "/" not in value[7:]:
     print(value)
 else:
-    print("models/fpv_drone_custom_320.onnx")
+    print("models/fpv_drone_latest.onnx")
 ')"
     if [[ -f "$configured_model" ]]; then
         MODEL_PATH="$configured_model"
