@@ -15,7 +15,7 @@ CAMERA_INPUT="easycap"
 DIGITAL_CAMERA_DEVICE=""
 MODEL_PATH="models/fpv_drone_latest.onnx"
 CONFIDENCE_PERCENT="20"
-INFERENCE_SIZE="320"
+INFERENCE_SIZE="640"
 INFERENCE_INTERVAL="2"
 CAMERA_FPS="25"
 GENERIC_LABEL="1"
@@ -77,6 +77,10 @@ elif [[ "$configured_camera" == "digital" && "$configured_digital_device" == /de
     CAMERA_INPUT="digital"
     # CSI-камера Raspberry Pi должна открываться через Picamera2, а не V4L2.
     CAMERA_SOURCE="picamera"
+elif [[ "$configured_camera" == "usb" && "$configured_digital_device" == /dev/v4l/by-id/* ]]; then
+    CAMERA_INPUT="usb"
+    # USB-камера открывается через V4L2 по стабильной udev-ссылке.
+    CAMERA_SOURCE="$configured_digital_device"
 else
     printf '[ОШИБКА] Источник камеры не настроен: %s %s\n' "$configured_camera" "$configured_digital_device" >&2
     exit 2

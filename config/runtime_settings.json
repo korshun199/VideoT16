@@ -1,17 +1,17 @@
 {
   "detection": {
     "model_path": "models/fpv_drone_latest.onnx",
-    "camera_source": "easycap",
-    "digital_camera_device": "",
+    "camera_source": "usb",
+    "digital_camera_device": "/dev/v4l/by-id/usb-046d_Brio_90_2613ZBY23218-video-index0",
     "confidence_percent": 20,
-    "inference_size": 320,
+    "inference_size": 640,
     "inference_interval": 2,
     "generic_label": false
   },
   "video_output": {
-    "j7_enabled": true,
+    "j7_enabled": false,
     "j7_overlay_enabled": false,
-    "flight_controller_osd_enabled": true,
+    "flight_controller_osd_enabled": false,
     "drm_device": "/dev/dri/by-path/platform-1f00144000.vec-card",
     "flight_controller_port": "/dev/ttyACM0"
   },
