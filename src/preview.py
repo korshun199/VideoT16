@@ -69,16 +69,10 @@ class PreviewServer:
         self._thread.start()
         print(f"Веб-просмотр: http://{host}:{port}/", flush=True)
 
-    def update(self, frame, osd_lines=()) -> None:
-        """Рисует копию OSD и кодирует обработанный кадр в JPEG."""
+    def update(self, frame) -> None:
+        """Кодирует обработанный кадр в JPEG для веб-просмотра."""
         import cv2
 
-        # Показываем входящие строки OSD в вебе, не изменяя поток к VTX.
-        for index, (_row, _column, text) in enumerate(osd_lines):
-            if index >= 8:
-                break
-            cv2.putText(frame, text[:70], (12, 24 + index * 22),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2, cv2.LINE_AA)
         # Умеренное качество снижает задержку MJPEG на Raspberry Pi.
         ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 55])
         if ok:

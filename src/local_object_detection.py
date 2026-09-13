@@ -400,20 +400,8 @@ def draw_detections(frame, detections: tuple[Detection, ...]):
     for detection in detections:
         label = f"{detection.name} {detection.confidence * 100:.0f}%"
         object_font = getattr(cv2, OBJECT_STYLE["font"])
-        # Показываем фиксированный указатель вокруг центра детекции, а не
-        # сырые границы YOLO: ошибочная гигантская рамка больше не закрывает
-        # изображение. Координаты штатного Betaflight OSD считаются отдельно
-        # по исходной детекции и остаются без изменений.
-        center_x = (detection.x1 + detection.x2) // 2
-        center_y = (detection.y1 + detection.y2) // 2
-        marker_size = max(
-            8,
-            int(min(frame_width, frame_height) * OBJECT_STYLE["marker_size_ratio"]),
-        )
-        x1 = max(0, center_x - marker_size // 2)
-        y1 = max(0, center_y - marker_size // 2)
-        x2 = min(frame_width - 1, x1 + marker_size)
-        y2 = min(frame_height - 1, y1 + marker_size)
+        # Для пилота показываем компактную рамку вокруг центра bbox модели.
+        x1, y1, x2, y2 = scaled_detection_box(detection, 0.5, frame_width, frame_height)
         cv2.rectangle(
             annotated,
             (x1, y1),
@@ -436,6 +424,21 @@ def draw_detections(frame, detections: tuple[Detection, ...]):
             cv2.LINE_AA,
         )
     return annotated
+
+
+def scaled_detection_box(
+    detection: Detection, scale: float, frame_width: int, frame_height: int
+) -> tuple[int, int, int, int]:
+    """Возвращает рамку вокруг центра детекции с заданным масштабом."""
+    center_x = (detection.x1 + detection.x2) / 2
+    center_y = (detection.y1 + detection.y2) / 2
+    half_width = max(1, (detection.x2 - detection.x1) * scale / 2)
+    half_height = max(1, (detection.y2 - detection.y1) * scale / 2)
+    x1 = max(0, min(frame_width - 1, round(center_x - half_width)))
+    y1 = max(0, min(frame_height - 1, round(center_y - half_height)))
+    x2 = max(x1 + 1, min(frame_width - 1, round(center_x + half_width)))
+    y2 = max(y1 + 1, min(frame_height - 1, round(center_y + half_height)))
+    return x1, y1, x2, y2
 
 
 def put_osd_text(frame, text: str, position: tuple[int, int]):
@@ -1083,8 +1086,9 @@ def run(args: argparse.Namespace) -> int:
             if displayport_overlay:
                 if tracked_detections:
                     target = tracked_detections[0]
+                    box = scaled_detection_box(target, 0.5, frame.shape[1], frame.shape[0])
                     displayport_overlay.update(
-                        target.x1, target.y1, target.x2, target.y2,
+                        *box,
                         frame.shape[1], frame.shape[0],
                     )
                 else:
@@ -1100,6 +1104,8 @@ def run(args: argparse.Namespace) -> int:
                         flush=True,
                     )
                 else:
+                    # Отладка показывает сырую лучшую уверенность модели.
+                    # Порог и наличие рамки контролируются отдельно.
                     best_confidence = getattr(onnx_detector, "last_best_confidence", 0.0)
                     print(
                         "\033[33m"
@@ -1141,8 +1147,7 @@ def run(args: argparse.Namespace) -> int:
             if drm_output:
                 drm_output.write(annotated)
             if preview_server:
-                osd_lines = displayport_proxy.osd_snapshot() if displayport_proxy else ()
-                preview_server.update(annotated, osd_lines)
+                preview_server.update(annotated)
             frame_number += 1
 
             if not args.headless:

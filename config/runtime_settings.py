@@ -19,7 +19,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "confidence_percent": 60,
         "inference_size": 256,
         "inference_interval": 2,
-        "generic_label": True,
+        "generic_label": False,
     },
     "camera": {
         "v4l2_controls_enabled": False,

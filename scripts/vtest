@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+# Короткий защищённый самотест VideoT16 на Raspberry.
+PROJECT_DIR="/home/oleg/VideoT16"
+GREEN='\033[1;32m'
+RED='\033[1;31m'
+CYAN='\033[1;36m'
+RESET='\033[0m'
+
+printf '%bVideoT16 — самопроверка%b\n' "$CYAN" "$RESET"
+cd "$PROJECT_DIR"
+
+if [[ "${1:-}" == "--подробно" || "${1:-}" == "--verbose" ]]; then
+    exec /home/oleg/VideoT16/.venv/bin/python3 "$PROJECT_DIR/launcher.py" --test
+fi
+
+errors=0
+check_item() {
+    local name="$1"
+    shift
+    if "$@"; then
+        printf '%b%s: ОК%b\n' "$GREEN" "$name" "$RESET"
+    else
+        printf '%b%s: ОШИБКА%b\n' "$RED" "$name" "$RESET"
+        errors=$((errors + 1))
+    fi
+}
+
+check_item "Память" test -r /proc/meminfo
+check_item "TEMP CPU" test -r /sys/class/thermal/thermal_zone0/temp
+camera="$(find /dev/v4l/by-id -maxdepth 1 -type l -name '*video-index0' 2>/dev/null | head -n 1)"
+if [[ -n "$camera" ]]; then
+    printf '%bКамера EasyCap: ОК%b\n' "$GREEN" "$RESET"
+else
+    printf '%bКамера EasyCap: ОШИБКА — устройство не найдено%b\n' "$RED" "$RESET"
+    errors=$((errors + 1))
+fi
+check_item "UART OSD" test -c /dev/ttyAMA0 -a -c /dev/ttyAMA2
+
+set +e
+result="$(/home/oleg/VideoT16/.venv/bin/python3 "$PROJECT_DIR/launcher.py" --test 2>&1)"
+status=$?
+set -e
+
+if [[ "$status" -eq 0 ]]; then
+    count="$(printf '%s\n' "$result" | sed -nE 's/.*Ran ([0-9]+) tests.*/\1/p' | tail -n 1)"
+    printf '%bПрограммные тесты: ОК, %s%b\n' "$GREEN" "${count:-все}" "$RESET"
+else
+    printf '%bПрограммные тесты: ОШИБКА%b\n' "$RED" "$RESET"
+    printf '%s\n' "$result" | tail -n 12
+    errors=$((errors + 1))
+fi
+
+if [[ "$errors" -eq 0 ]]; then
+    printf '%bИТОГ: СИСТЕМА ГОТОВА%b\n' "$GREEN" "$RESET"
+else
+    printf '%bИТОГ: СИСТЕМА НЕ ГОТОВА%b\n' "$RED" "$RESET"
+fi
+exit "$((status != 0 || errors != 0))"

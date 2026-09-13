@@ -18,7 +18,6 @@ RUSSIAN_DRONE_LABELS = {
     "fixed-wing": "AVIA DRON",
 }
 
-
 class OnnxDetector:
     """Запускает экспортированную YOLO-модель без Torch и Ultralytics."""
 
@@ -34,7 +33,7 @@ class OnnxDetector:
         self.generic_label = generic_label
         self.size = size
         self.object_label = object_label
-        # Лучшая вероятность текущего кадра, включая кандидатов ниже порога.
+        # Сырая лучшая вероятность текущего кадра для диагностического журнала.
         self.last_best_confidence = 0.0
         # Ограничиваем параллелизм: поток камеры и SSH должны оставаться отзывчивыми.
         options = ort.SessionOptions()
@@ -79,7 +78,13 @@ class OnnxDetector:
             y = (cy - box_height / 2 - pad_y) / scale
             w = box_width / scale
             h = box_height / scale
-            boxes.append([int(max(0, x)), int(max(0, y)), int(w), int(h)])
+            x1 = int(max(0, x))
+            y1 = int(max(0, y))
+            x2 = int(min(width, x + w))
+            y2 = int(min(height, y + h))
+            if x2 <= x1 or y2 <= y1:
+                continue
+            boxes.append([x1, y1, x2 - x1, y2 - y1])
             kept_scores.append(float(score))
             kept_ids.append(int(class_id))
         indices = cv2.dnn.NMSBoxes(boxes, kept_scores, self.confidence, 0.45)

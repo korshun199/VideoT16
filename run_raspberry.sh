@@ -13,12 +13,13 @@ fi
 CAMERA_SOURCE="/dev/video0"
 CAMERA_INPUT="easycap"
 DIGITAL_CAMERA_DEVICE=""
-MODEL_PATH="models/fpv_drone_latest.onnx"
+MODEL_PATH="models/fpv_drone_best.onnx"
 CONFIDENCE_PERCENT="20"
 INFERENCE_SIZE="640"
 INFERENCE_INTERVAL="1"
 CAMERA_FPS="25"
-GENERIC_LABEL="1"
+# Используем имя класса модели, например FPV-DRON, а не служебное OBJECT.
+GENERIC_LABEL="0"
 HEADLESS="1"
 # Два выхода настраиваются отдельно в config/runtime_settings.json.
 J7_OUTPUT_ENABLED="1"
@@ -118,11 +119,11 @@ import json, sys
 try:
     value = json.load(open("config/runtime_settings.json", encoding="utf-8"))["detection"]["model_path"]
 except (KeyError, OSError, TypeError, ValueError):
-    value = "models/fpv_drone_latest.onnx"
+    value = "models/fpv_drone_best.onnx"
 if value.startswith("models/") and value.endswith(".onnx") and "/" not in value[7:]:
     print(value)
 else:
-    print("models/fpv_drone_latest.onnx")
+    print("models/fpv_drone_best.onnx")
 ')"
     if [[ -f "$configured_model" ]]; then
         MODEL_PATH="$configured_model"
