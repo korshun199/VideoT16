@@ -31,6 +31,15 @@ TEMPERATURE_INTERVAL="5"
 TEMPERATURE_WARNING="70"
 TEMPERATURE_CRITICAL="80"
 
+# Постоянный порог можно менять короткой командой conf XX на Raspberry.
+PERSISTENT_CONFIDENCE_FILE="/home/oleg/VideoT16/confidence.conf"
+if [[ -f "$PERSISTENT_CONFIDENCE_FILE" ]]; then
+    saved_confidence="$(tr -dc '0-9' < "$PERSISTENT_CONFIDENCE_FILE")"
+    if [[ -n "$saved_confidence" && "$saved_confidence" -ge 1 && "$saved_confidence" -le 100 ]]; then
+        CONFIDENCE_PERCENT="$saved_confidence"
+    fi
+fi
+
 cd "$PROJECT_DIR"
 
 # Источник видео выбирается в runtime_settings.json.

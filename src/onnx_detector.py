@@ -14,7 +14,7 @@ from src.realtime import Detection
 
 # Русские подписи классов FPV-модели.
 RUSSIAN_DRONE_LABELS = {
-    "quadcopter": "BABA YAGA",
+    "quadcopter": "FPV-DRON",
     "fixed-wing": "AVIA DRON",
 }
 

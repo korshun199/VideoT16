@@ -385,7 +385,7 @@ def extract_detections(result, generic_label: bool = False, object_label: str | 
             name = object_label
         else:
             # Для одноклассовой FPV-модели сохраняем понятное имя класса.
-            name = result.names.get(class_id, "BABA YAGA")
+            name = result.names.get(class_id, "FPV-DRON")
         detections.append(Detection(x1, y1, x2, y2, str(name), confidence))
     return tuple(detections)
 
