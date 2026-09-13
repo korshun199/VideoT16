@@ -33,6 +33,7 @@ include_path README_OLEG_MASHA.md
 include_path RASPBERRY_TRANSFER.md
 include_path SESSION_HANDOFF.md
 include_path WORKING_SCHEME.md
+include_path RESTORE_RASPBERRY.md
 include_path SECURITY.md
 include_path requirements-raspberry.txt
 include_path run_raspberry.sh

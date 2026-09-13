@@ -7,6 +7,8 @@
 2. [`SECURITY.md`](../SECURITY.md) — правила защиты проекта и production-
    развертывания.
 3. [`SESSION_HANDOFF.md`](../SESSION_HANDOFF.md) — краткая передача контекста.
+4. [`RESTORE_RASPBERRY.md`](../RESTORE_RASPBERRY.md) — восстановление на новой
+   Raspberry и SD-карте.
 
 ## Актуальные документы
 
