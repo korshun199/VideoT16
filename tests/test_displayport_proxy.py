@@ -8,9 +8,20 @@ from src.displayport_proxy import (
     MspV1Parser,
     build_msp_frame,
     displayport_write_string,
-    LatinOnlyMspStream,
-    latin_only_displayport,
+    DisplayPortOverlay,
 )
+
+
+class RecordingProxy:
+    """Запоминает исходящие команды overlay без настоящего UART."""
+
+    def __init__(self) -> None:
+        """Создаёт пустой список команд."""
+        self.packets = []
+
+    def send_displayport(self, packet: bytes) -> None:
+        """Сохраняет команду, которую overlay отправил бы на VTX."""
+        self.packets.append(packet)
 
 
 class DisplayPortProxyTests(unittest.TestCase):
@@ -38,20 +49,23 @@ class DisplayPortProxyTests(unittest.TestCase):
         """Исходящий пакет имеет направление FC к внешнему OSD-устройству."""
         self.assertEqual(displayport_write_string(0, 0, "FPV-DRON")[:3], b"$M>")
 
-    def test_non_latin_osd_bytes_are_replaced_with_spaces(self) -> None:
-        """Русские и служебные байты не превращаются в кракозябры на VTX."""
-        packet = build_msp_frame(MSP_DISPLAYPORT, bytes((MSP_DP_WRITE_STRING, 3, 2, 0, 65, 0xD0, 0x90)))
-        filtered = latin_only_displayport(packet)
-        self.assertEqual(filtered[5:-1], bytes((MSP_DP_WRITE_STRING, 3, 2, 0, 65, 32, 32)))
+    def test_overlay_adds_ascii_system_status(self) -> None:
+        """Системный статус формируется отдельной ASCII-строкой для VTX."""
+        proxy = RecordingProxy()
+        overlay = DisplayPortOverlay(proxy)
+        proxy.packets.clear()
+        overlay.update_status("TEMP 48.2C CPU 37%")
+        self.assertTrue(any(b"TEMP 48.2C CPU 37%" in packet for packet in proxy.packets))
 
-    def test_latin_filter_handles_fragmented_stream(self) -> None:
-        """Фильтр обрабатывает пакет, разделённый на несколько чтений UART."""
-        packet = build_msp_frame(MSP_DISPLAYPORT, bytes((MSP_DP_WRITE_STRING, 3, 2, 0, 65, 0xD0, 0x90)))
-        stream = LatinOnlyMspStream()
-        self.assertEqual(stream.feed(packet[:4]), b"")
-        result = stream.feed(packet[4:])
-        self.assertEqual(result[5:-1], bytes((MSP_DP_WRITE_STRING, 3, 2, 0, 65, 32, 32)))
-
+    def test_overlay_does_not_repeat_unchanged_status(self) -> None:
+        """Неизменившийся статус не создаёт лишний поток OSD-команд."""
+        proxy = RecordingProxy()
+        overlay = DisplayPortOverlay(proxy)
+        proxy.packets.clear()
+        overlay.update_status("TEMP 48.2C CPU 37%")
+        packet_count = len(proxy.packets)
+        overlay.update_status("TEMP 48.2C CPU 37%")
+        self.assertEqual(len(proxy.packets), packet_count)
 
 if __name__ == "__main__":
     unittest.main()

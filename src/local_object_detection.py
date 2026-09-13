@@ -1084,6 +1084,8 @@ def run(args: argparse.Namespace) -> int:
                     last_osd_update = now_monotonic
                     osd_pointer_visible = True
             if displayport_overlay:
+                # Температура и нагрузка CPU идут пилоту отдельной ASCII-строкой.
+                displayport_overlay.update_status(system_status.text())
                 if tracked_detections:
                     target = tracked_detections[0]
                     box = scaled_detection_box(target, 0.5, frame.shape[1], frame.shape[0])

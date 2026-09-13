@@ -34,6 +34,9 @@ arm64-lab/shared/*
 !arm64-lab/shared/.gitkeep
 # Локальные данные обучения и резервные копии не публикуются в GitHub.
 backup_raspberry/
+# Локальные архивы резервной копии не публикуются.
+BACKUP/*.tar.gz
+BACKUP/*.zip
 dataset/fpv/video/
 dataset/fpv/images/from_videos/
 dataset/fpv/images/annotated/

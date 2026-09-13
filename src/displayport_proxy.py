@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import signal
 import threading
-import time
 from dataclasses import dataclass
 
 
@@ -106,56 +105,6 @@ def displayport_options(canvas: int = 1) -> bytes:
     return build_msp_frame(MSP_DISPLAYPORT, bytes((MSP_DP_OPTIONS, canvas)))
 
 
-def latin_only_displayport(packet: bytes) -> bytes:
-    """Убирает не-ASCII текст из входящей команды OSD, сохраняя её координаты."""
-    if not packet.startswith(b"$M>") or len(packet) < 7:
-        return packet
-    payload_size = packet[3]
-    if packet[4] != MSP_DISPLAYPORT or payload_size < 5 or len(packet) != payload_size + 6:
-        return packet
-    payload = bytearray(packet[5:5 + payload_size])
-    if payload[0] != MSP_DP_WRITE_STRING:
-        return packet
-    # Структура: команда, строка, столбец, атрибут, текст.
-    payload[4:] = bytes(byte if 32 <= byte <= 126 else 32 for byte in payload[4:])
-    return build_msp_frame(MSP_DISPLAYPORT, bytes(payload))
-
-
-class LatinOnlyMspStream:
-    """Фильтрует текст MSP DisplayPort в потоке произвольных UART-порций."""
-
-    def __init__(self) -> None:
-        """Создаёт буфер неполного MSP-пакета."""
-        self._buffer = bytearray()
-
-    def feed(self, data: bytes) -> bytes:
-        """Возвращает данные для VTX, заменяя не-ASCII только в полном OSD-пакете."""
-        self._buffer.extend(data)
-        output = bytearray()
-        while True:
-            marker = self._buffer.find(b"$M>")
-            if marker < 0:
-                keep = min(2, len(self._buffer))
-                output.extend(self._buffer[:-keep] if keep else self._buffer)
-                if keep:
-                    del self._buffer[:-keep]
-                else:
-                    self._buffer.clear()
-                break
-            if marker:
-                output.extend(self._buffer[:marker])
-                del self._buffer[:marker]
-            if len(self._buffer) < 6:
-                break
-            frame_size = self._buffer[3] + 6
-            if len(self._buffer) < frame_size:
-                break
-            frame = bytes(self._buffer[:frame_size])
-            del self._buffer[:frame_size]
-            output.extend(latin_only_displayport(frame))
-        return bytes(output)
-
-
 class DisplayPortProxy:
     """Пересылает MSP между полётником и цифровым видеопередатчиком."""
 
@@ -164,8 +113,6 @@ class DisplayPortProxy:
         self._fc = flight_controller_port
         self._video = video_port
         self._write_lock = threading.Lock()
-        self._osd_lock = threading.Lock()
-        self._osd_lines: dict[tuple[int, int], str] = {}
         self._stop = threading.Event()
         self._threads = (
             threading.Thread(target=self._forward, args=(self._fc, self._video), name="osd-fc-to-video", daemon=True),
@@ -175,42 +122,13 @@ class DisplayPortProxy:
             thread.start()
 
     def _forward(self, source, target) -> None:
-        """Пересылает байты без изменения и не вмешивается в команды полёта."""
-        parser = MspV1Parser() if source is self._fc else None
-        sanitizer = LatinOnlyMspStream() if source is self._fc else None
+        """Прозрачно пересылает байты без разбора и изменения OSD."""
         while not self._stop.is_set():
             data = source.read(source.in_waiting or 1)
             if data:
-                if parser is not None:
-                    self._collect_osd(parser.feed(data))
-                    data = sanitizer.feed(data)
                 with self._write_lock:
                     target.write(data)
                     target.flush()
-
-    def _collect_osd(self, frames: tuple[MspFrame, ...]) -> None:
-        """Сохраняет копию строк DisplayPort для диагностического веб-просмотра."""
-        with self._osd_lock:
-            for frame in frames:
-                if frame.command != MSP_DISPLAYPORT or not frame.payload:
-                    continue
-                command = frame.payload[0]
-                if command == MSP_DP_CLEAR_SCREEN:
-                    self._osd_lines.clear()
-                elif command == MSP_DP_WRITE_STRING and len(frame.payload) >= 4:
-                    row, column = frame.payload[1], frame.payload[2]
-                    text = frame.payload[4:].split(b"\0", 1)[0]
-                    clean = bytes(byte if 32 <= byte <= 126 else 32 for byte in text)
-                    clean_text = clean.decode("ascii").strip()
-                    if clean_text:
-                        self._osd_lines[(row, column)] = clean_text
-                    else:
-                        self._osd_lines.pop((row, column), None)
-
-    def osd_snapshot(self) -> tuple[tuple[int, int, str], ...]:
-        """Возвращает последние строки OSD в порядке координат."""
-        with self._osd_lock:
-            return tuple((row, column, text) for (row, column), text in sorted(self._osd_lines.items()))
 
     def send_displayport(self, packet: bytes) -> None:
         """Добавляет проверенный пакет OSD в сторону цифрового видеопередатчика."""
@@ -238,6 +156,7 @@ class DisplayPortOverlay:
         self._columns = columns
         self._rows = rows
         self._last_lines: tuple[tuple[int, int, str], ...] = ()
+        self._last_status = ""
         # Инициализируем VTX как HD DisplayPort-устройство до первой рамки.
         self._proxy.send_displayport(displayport_heartbeat())
         self._proxy.send_displayport(displayport_options(1))
@@ -256,13 +175,26 @@ class DisplayPortOverlay:
             self._proxy.send_displayport(displayport_draw_screen())
         self._last_lines = ()
 
+    def update_status(self, text: str) -> None:
+        """Выводит системную температуру и нагрузку CPU в нижней строке OSD."""
+        clean_text = text.encode("ascii", "replace").decode("ascii")[: self._columns]
+        if clean_text == self._last_status:
+            return
+        if self._last_status:
+            self._send(0, self._rows - 1, " " * len(self._last_status))
+        if clean_text:
+            self._send(0, self._rows - 1, clean_text)
+        self._last_status = clean_text
+        self._proxy.send_displayport(displayport_draw_screen())
+
     def update(self, x1: int, y1: int, x2: int, y2: int, width: int, height: int) -> None:
         """Преобразует пиксельную рамку в ASCII-команды DisplayPort."""
         self.clear()
         left = max(0, min(self._columns - 8, round(x1 * self._columns / max(1, width))))
         right = max(left + 6, min(self._columns - 1, round(x2 * self._columns / max(1, width))))
         top = max(1, min(self._rows - 3, round(y1 * self._rows / max(1, height))))
-        bottom = max(top + 2, min(self._rows - 1, round(y2 * self._rows / max(1, height))))
+        # Нижняя строка зарезервирована под TEMP/CPU и не пересекается рамкой.
+        bottom = max(top + 2, min(self._rows - 2, round(y2 * self._rows / max(1, height))))
         inner = max(2, right - left - 1)
         lines = [(top, "+" + "-" * inner + "+"), (bottom, "+" + "-" * inner + "+")]
         lines.extend((row, "|" + " " * inner + "|") for row in range(top + 1, bottom))

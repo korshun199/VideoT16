@@ -13,7 +13,7 @@ Raspberry Pi получает видеокадры с EasyCap, локально 
 ```text
 EasyCap -> Raspberry: видеокадр -> локальный YOLO -> рамка/подпись
 FC -> Raspberry: цифровой MSP DisplayPort OSD
-Raspberry: прозрачная пересылка FC <-> VTX + команда рамки/подписи
+Raspberry: прозрачная пересылка FC <-> VTX + собственные команды рамки/подписи
 Raspberry -> VTX: обновлённый цифровой OSD
 VTX -> пилот: штатное изображение с OSD
 ```
@@ -41,6 +41,7 @@ UART отключена. Оба канала работают 115200, 8N1, бе�
 - EasyCap: 640x480, 25 FPS;
 - DisplayPort: `/dev/ttyAMA0` (FC) -> `/dev/ttyAMA2` (VTX);
 - HDMI/J7 в рабочем режиме выключены;
+- цифровой OSD дополнительно получает нижнюю строку `TEMP xx.xC CPU yy%`;
 - веб-просмотр — только диагностический поток EasyCap, не поток VTX.
 
 Запрос к веб-просмотру с ноутбука:
@@ -78,7 +79,7 @@ VideoT16 из оперативного каталога. Исходный payloa
 
 - `src/local_object_detection.py` — цикл камеры, инференс, рамка и веб;
 - `src/onnx_detector.py` — загрузка ONNX и детекция;
-- `src/displayport_proxy.py` — прозрачный MSP DisplayPort proxy и OSD;
+- `src/displayport_proxy.py` — прозрачный MSP DisplayPort proxy и наши добавления;
 - `src/preview.py` — диагностический веб-поток;
 - `src/realtime.py` — `TEMP CPU` и системная телеметрия;
 - `config/runtime_settings.json` — пути и параметры запуска;
