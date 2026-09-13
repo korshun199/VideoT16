@@ -147,6 +147,28 @@ fi
 if [[ -n "$INAV_PORT" ]]; then
     RUN_ARGS+=(--inav-port "$INAV_PORT")
 fi
+displayport_config="$($PYTHON_BIN -c 'import json
+try:
+    value = json.load(open("config/runtime_settings.json", encoding="utf-8"))["video_output"]
+    print("1" if value.get("displayport_proxy_enabled", False) else "0", value.get("displayport_fc_port", ""), value.get("displayport_vtx_port", ""))
+except (KeyError, OSError, TypeError, ValueError):
+    print("0  ")
+')"
+read -r displayport_enabled displayport_fc displayport_vtx <<< "$displayport_config"
+if [[ "$displayport_enabled" == "1" && -e "$displayport_fc" && -e "$displayport_vtx" ]]; then
+    RUN_ARGS+=(--displayport-fc-port "$displayport_fc" --displayport-vtx-port "$displayport_vtx")
+fi
+preview_config="$($PYTHON_BIN -c 'import json
+try:
+    value = json.load(open("config/runtime_settings.json", encoding="utf-8"))["video_output"]
+    print("1" if value.get("preview_enabled", False) else "0", value.get("preview_host", "127.0.0.1"), int(value.get("preview_port", 0)))
+except (KeyError, OSError, TypeError, ValueError):
+    print("0 127.0.0.1 0")
+')"
+read -r preview_enabled PREVIEW_HOST PREVIEW_PORT <<< "$preview_config"
+if [[ "$preview_enabled" == "1" && "$PREVIEW_PORT" -ge 1 && "$PREVIEW_PORT" -le 65535 ]]; then
+    RUN_ARGS+=(--preview-host "$PREVIEW_HOST" --preview-port "$PREVIEW_PORT")
+fi
 
 printf 'Запуск Raspberry Pi: камера=%s, FPS=%s, модель=%s, порог=%s%%, размер=%s, каждый %d-й кадр\n' \
     "$CAMERA_SOURCE" "$CAMERA_FPS" "$MODEL_PATH" "$CONFIDENCE_PERCENT" "$INFERENCE_SIZE" "$INFERENCE_INTERVAL"

@@ -146,6 +146,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--alert-cooldown", type=float, default=3.0, help="Пауза между сигналами в секундах")
     parser.add_argument("--output", type=Path, help="Путь записи обработанного видео")
     parser.add_argument("--snapshot-dir", type=Path, default=Path("snapshots"))
+    parser.add_argument("--preview-host", default="127.0.0.1", help="Адрес временного веб-просмотра")
+    parser.add_argument("--preview-port", type=int, default=0, help="Порт веб-просмотра; 0 — выключен")
     parser.add_argument("--headless", action="store_true", help="Работать без окна предпросмотра")
     parser.add_argument(
         "--j7-pass-through",
@@ -174,6 +176,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-frames", type=int, default=0, help="Остановиться после N кадров; 0 — без лимита")
     parser.add_argument("--list-cameras", action="store_true", help="Проверить камеры 0..4")
     parser.add_argument("--inav-port", help="USB-порт INAV, например /dev/ttyACM0")
+    parser.add_argument("--displayport-fc-port", help="UART цифрового OSD со стороны полётника")
+    parser.add_argument("--displayport-vtx-port", help="UART цифрового OSD со стороны VTX")
+    parser.add_argument("--displayport-cols", type=int, default=50, help="Ширина canvas цифрового OSD")
+    parser.add_argument("--displayport-rows", type=int, default=18, help="Высота canvas цифрового OSD")
     parser.add_argument("--inav-baudrate", type=int, default=115200, help="Скорость MSP-порта INAV")
     parser.add_argument(
         "--battery-capacity-mah",
@@ -295,7 +301,10 @@ def open_capture(source: int | str, camera_settings: dict | None = None):
 
     if source == "picamera":
         return PicameraCapture(camera_settings=camera_settings)
-    if isinstance(source, int) or (isinstance(source, str) and source.startswith("/dev/video")):
+    if isinstance(source, int) or (
+        isinstance(source, str)
+        and (source.startswith("/dev/video") or source.startswith("/dev/v4l/by-id/"))
+    ):
         return cv2.VideoCapture(source, cv2.CAP_V4L2)
     return cv2.VideoCapture(source)
 
@@ -883,8 +892,32 @@ def run(args: argparse.Namespace) -> int:
 
         inav_reader = InavMspReader(args.inav_port, args.inav_baudrate)
         print(f"INAV подключён: {args.inav_port} (только чтение MSP)", flush=True)
+    displayport_proxy = None
+    displayport_overlay = None
+    displayport_serials = ()
+    if args.displayport_fc_port and args.displayport_vtx_port:
+        import serial
+        from src.displayport_proxy import DisplayPortOverlay, DisplayPortProxy
+
+        fc_serial = serial.Serial(args.displayport_fc_port, 115200, timeout=0.05)
+        vtx_serial = serial.Serial(args.displayport_vtx_port, 115200, timeout=0.05)
+        displayport_serials = (fc_serial, vtx_serial)
+        displayport_proxy = DisplayPortProxy(fc_serial, vtx_serial)
+        displayport_overlay = DisplayPortOverlay(
+            displayport_proxy, args.displayport_cols, args.displayport_rows
+        )
+        print(
+            f"Цифровой OSD подключён: FC={args.displayport_fc_port} "
+            f"VTX={args.displayport_vtx_port}",
+            flush=True,
+        )
     framebuffer_output = None
     drm_output = None
+    preview_server = None
+    if args.preview_port:
+        from src.preview import PreviewServer
+
+        preview_server = PreviewServer(args.preview_host, args.preview_port)
     if args.drm:
         from src.drm_output import DrmOutput
 
@@ -1023,7 +1056,7 @@ def run(args: argparse.Namespace) -> int:
                     osd_pointer_visible = False
             # В pass-through на J7 идёт исходный кадр со штатным OSD
             # полётника; координаты цели ниже по-прежнему отправляются в MSP.
-            if args.j7_pass_through:
+            if args.j7_pass_through and not (preview_server or displayport_overlay):
                 annotated = frame.copy()
             else:
                 annotated = draw_detections(frame, tracked_detections)
@@ -1047,6 +1080,15 @@ def run(args: argparse.Namespace) -> int:
                     last_osd_position = osd_position
                     last_osd_update = now_monotonic
                     osd_pointer_visible = True
+            if displayport_overlay:
+                if tracked_detections:
+                    target = tracked_detections[0]
+                    displayport_overlay.update(
+                        target.x1, target.y1, target.x2, target.y2,
+                        frame.shape[1], frame.shape[0],
+                    )
+                else:
+                    displayport_overlay.clear()
             if now_monotonic - last_status_log >= 1.0:
                 last_status_log = now_monotonic
                 if osd_pointer_visible and last_osd_position is not None:
@@ -1098,6 +1140,9 @@ def run(args: argparse.Namespace) -> int:
                 framebuffer_output.write(annotated)
             if drm_output:
                 drm_output.write(annotated)
+            if preview_server:
+                osd_lines = displayport_proxy.osd_snapshot() if displayport_proxy else ()
+                preview_server.update(annotated, osd_lines)
             frame_number += 1
 
             if not args.headless:
@@ -1127,12 +1172,18 @@ def run(args: argparse.Namespace) -> int:
         capture.release()
         if inav_reader:
             inav_reader.close()
+        if displayport_proxy:
+            displayport_proxy.close()
+        for serial_port in displayport_serials:
+            serial_port.close()
         if writer:
             writer.release()
         if framebuffer_output:
             framebuffer_output.close()
         if drm_output:
             drm_output.close()
+        if preview_server:
+            preview_server.close()
         cv2.destroyAllWindows()
     print(f"Обработано кадров: {frame_number}")
     return 0
