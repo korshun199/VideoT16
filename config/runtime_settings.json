@@ -4,7 +4,7 @@
     "camera_source": "easycap",
     "digital_camera_device": "",
     "confidence_percent": 20,
-    "inference_size": 320,
+    "inference_size": 640,
     "inference_interval": 1,
     "generic_label": false
   },
