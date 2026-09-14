@@ -17,6 +17,7 @@
     "displayport_proxy_enabled": true,
     "displayport_fc_port": "/dev/ttyAMA0",
     "displayport_vtx_port": "/dev/ttyAMA2",
+    "displayport_vtx_only": true,
     "preview_enabled": true,
     "preview_host": "127.0.0.1",
     "preview_port": 8081

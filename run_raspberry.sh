@@ -160,12 +160,14 @@ fi
 displayport_config="$($PYTHON_BIN -c 'import json
 try:
     value = json.load(open("config/runtime_settings.json", encoding="utf-8"))["video_output"]
-    print("1" if value.get("displayport_proxy_enabled", False) else "0", value.get("displayport_fc_port", ""), value.get("displayport_vtx_port", ""))
+    print("1" if value.get("displayport_proxy_enabled", False) else "0", value.get("displayport_fc_port", ""), value.get("displayport_vtx_port", ""), "1" if value.get("displayport_vtx_only", False) else "0")
 except (KeyError, OSError, TypeError, ValueError):
-    print("0  ")
+    print("0   0")
 ')"
-read -r displayport_enabled displayport_fc displayport_vtx <<< "$displayport_config"
-if [[ "$displayport_enabled" == "1" && -e "$displayport_fc" && -e "$displayport_vtx" ]]; then
+read -r displayport_enabled displayport_fc displayport_vtx displayport_vtx_only <<< "$displayport_config"
+if [[ "$displayport_enabled" == "1" && "$displayport_vtx_only" == "1" && -e "$displayport_vtx" ]]; then
+    RUN_ARGS+=(--displayport-vtx-port "$displayport_vtx" --displayport-vtx-only)
+elif [[ "$displayport_enabled" == "1" && -e "$displayport_fc" && -e "$displayport_vtx" ]]; then
     RUN_ARGS+=(--displayport-fc-port "$displayport_fc" --displayport-vtx-port "$displayport_vtx")
 fi
 preview_config="$($PYTHON_BIN -c 'import json

@@ -178,6 +178,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--inav-port", help="USB-порт INAV, например /dev/ttyACM0")
     parser.add_argument("--displayport-fc-port", help="UART цифрового OSD со стороны полётника")
     parser.add_argument("--displayport-vtx-port", help="UART цифрового OSD со стороны VTX")
+    parser.add_argument("--displayport-vtx-only", action="store_true", help="Только собственный OSD без FC")
     parser.add_argument("--displayport-cols", type=int, default=50, help="Ширина canvas цифрового OSD")
     parser.add_argument("--displayport-rows", type=int, default=18, help="Высота canvas цифрового OSD")
     parser.add_argument("--inav-baudrate", type=int, default=115200, help="Скорость MSP-порта INAV")
@@ -898,7 +899,19 @@ def run(args: argparse.Namespace) -> int:
     displayport_proxy = None
     displayport_overlay = None
     displayport_serials = ()
-    if args.displayport_fc_port and args.displayport_vtx_port:
+    if args.displayport_vtx_only and args.displayport_vtx_port:
+        import serial
+        from src.displayport_proxy import DisplayPortOverlay, SingleDisplayPortProxy
+
+        vtx_serial = serial.Serial(args.displayport_vtx_port, 115200, timeout=0.05)
+        displayport_serials = (vtx_serial,)
+        displayport_proxy = SingleDisplayPortProxy(vtx_serial)
+        displayport_overlay = DisplayPortOverlay(
+            displayport_proxy, args.displayport_cols, args.displayport_rows,
+            initialize=True,
+        )
+        print(f"Собственный цифровой OSD: VTX={args.displayport_vtx_port}, FC=OFF", flush=True)
+    elif args.displayport_fc_port and args.displayport_vtx_port:
         import serial
         from src.displayport_proxy import DisplayPortOverlay, DisplayPortProxy
 

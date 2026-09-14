@@ -173,6 +173,27 @@ class DisplayPortProxy:
             thread.join(timeout=1.0)
 
 
+class SingleDisplayPortProxy:
+    """Передаёт только собственный OSD Raspberry в цифровой VTX."""
+
+    def __init__(self, video_port) -> None:
+        """Сохраняет единственный UART стороны Ascent."""
+        self._video = video_port
+
+    def set_refresh_callback(self, _callback) -> None:
+        """Сохраняет совместимость с наложением без канала FC."""
+
+    def send_displayport(self, packet: bytes) -> None:
+        """Отправляет собственную команду Canvas в сторону VTX."""
+        if not packet.startswith(b"$M>"):
+            raise ValueError("Разрешено добавлять только исходящий MSPv1-пакет")
+        self._video.write(packet)
+        self._video.flush()
+
+    def close(self) -> None:
+        """Оставляет закрытие UART владельцу процесса."""
+
+
 class DisplayPortOverlay:
     """Добавляет рамку и подпись в цифровую OSD-сетку."""
 
