@@ -75,7 +75,7 @@ class SystemStatusMonitor:
             total_delta = total - self._last_total
             idle_delta = idle - self._last_idle
             if total_delta > 0:
-                cpu_percent = str(round(max(0.0, min(100.0, (1 - idle_delta / total_delta) * 100))))
+                cpu_percent = f"{max(0.0, min(100.0, (1 - idle_delta / total_delta) * 100)):.1f}"
             self._last_total, self._last_idle = total, idle
         self._text = f"TEMP {self._temperature()} CPU {cpu_percent}%"
         return self._text
