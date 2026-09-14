@@ -9,6 +9,8 @@
 3. [`SESSION_HANDOFF.md`](../SESSION_HANDOFF.md) — краткая передача контекста.
 4. [`RESTORE_RASPBERRY.md`](../RESTORE_RASPBERRY.md) — восстановление на новой
    Raspberry и SD-карте.
+5. [`WIRING_SOURCE_OF_TRUTH.md`](WIRING_SOURCE_OF_TRUTH.md) — раздельная схема
+   Raspberry, полётника и Ascent GT Pro.
 
 ## Актуальные документы
 

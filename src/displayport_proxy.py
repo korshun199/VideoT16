@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import signal
 import threading
+import time
 from dataclasses import dataclass
 
 
@@ -112,6 +113,9 @@ class DisplayPortProxy:
         """Принимает два уже открытых pyserial-порта и запускает мост."""
         self._fc = flight_controller_port
         self._video = video_port
+        self._fc_parser = MspV1Parser()
+        self._refresh_callback = None
+        self._refresh_timer = None
         self._write_lock = threading.Lock()
         self._stop = threading.Event()
         self._threads = (
@@ -121,6 +125,18 @@ class DisplayPortProxy:
         for thread in self._threads:
             thread.start()
 
+    def set_refresh_callback(self, callback) -> None:
+        """Назначает повторное нанесение нашего OSD после кадра полётника."""
+        self._refresh_callback = callback
+
+    def _schedule_refresh(self) -> None:
+        """Планирует OSD после короткой паузы за штатным кадром FC."""
+        if self._refresh_timer is not None:
+            self._refresh_timer.cancel()
+        self._refresh_timer = threading.Timer(0.01, self._refresh_callback)
+        self._refresh_timer.daemon = True
+        self._refresh_timer.start()
+
     def _forward(self, source, target) -> None:
         """Прозрачно пересылает байты без разбора и изменения OSD."""
         while not self._stop.is_set():
@@ -129,6 +145,16 @@ class DisplayPortProxy:
                 with self._write_lock:
                     target.write(data)
                     target.flush()
+                if source is self._fc and self._refresh_callback:
+                    # Отслеживаем только команду DRAW_SCREEN в копии данных.
+                    # Исходные байты FC уже переданы без изменения.
+                    frames = self._fc_parser.feed(data)
+                    if any(
+                        frame.command == MSP_DISPLAYPORT
+                        and frame.payload[:1] == bytes((MSP_DP_DRAW_SCREEN,))
+                        for frame in frames
+                    ):
+                        self._schedule_refresh()
 
     def send_displayport(self, packet: bytes) -> None:
         """Добавляет проверенный пакет OSD в сторону цифрового видеопередатчика."""
@@ -141,6 +167,8 @@ class DisplayPortProxy:
     def close(self) -> None:
         """Останавливает оба направления прокси."""
         self._stop.set()
+        if self._refresh_timer is not None:
+            self._refresh_timer.cancel()
         for thread in self._threads:
             thread.join(timeout=1.0)
 
@@ -157,6 +185,8 @@ class DisplayPortOverlay:
         self._rows = rows
         self._last_lines: tuple[tuple[int, int, str], ...] = ()
         self._last_status = ""
+        self._last_status_send = 0.0
+        self._proxy.set_refresh_callback(self.refresh)
         # Инициализируем VTX как HD DisplayPort-устройство до первой рамки.
         self._proxy.send_displayport(displayport_heartbeat())
         self._proxy.send_displayport(displayport_options(1))
@@ -178,14 +208,27 @@ class DisplayPortOverlay:
     def update_status(self, text: str) -> None:
         """Выводит системную температуру и нагрузку CPU в нижней строке OSD."""
         clean_text = text.encode("ascii", "replace").decode("ascii")[: self._columns]
-        if clean_text == self._last_status:
+        now = time.monotonic()
+        # Повторяем неизменный статус раз в секунду: TX не сообщает об обрыве,
+        # поэтому после восстановления провода Ascent должен получить OSD снова.
+        if clean_text == self._last_status and now - self._last_status_send < 1.0:
             return
-        if self._last_status:
+        if clean_text != self._last_status and self._last_status:
             self._send(0, self._rows - 1, " " * len(self._last_status))
         if clean_text:
             self._send(0, self._rows - 1, clean_text)
         self._last_status = clean_text
+        self._last_status_send = now
         self._proxy.send_displayport(displayport_draw_screen())
+
+    def refresh(self) -> None:
+        """Повторяет нашу рамку и статус после перерисовки OSD полётником."""
+        if self._last_status:
+            self._send(0, self._rows - 1, self._last_status)
+        for column, row, text in self._last_lines:
+            self._send(column, row, text)
+        if self._last_status or self._last_lines:
+            self._proxy.send_displayport(displayport_draw_screen())
 
     def update(self, x1: int, y1: int, x2: int, y2: int, width: int, height: int) -> None:
         """Преобразует пиксельную рамку в ASCII-команды DisplayPort."""

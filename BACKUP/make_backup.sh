@@ -49,6 +49,7 @@ include_path docs
 include_path web_config
 include_path scripts/conf
 include_path scripts/vtest
+include_path scripts/osd_test.py
 include_path scripts/train_fpv.py
 include_path scripts/install_raspberry_service.sh
 include_path scripts/setup_ubuntu.sh

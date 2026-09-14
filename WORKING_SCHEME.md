@@ -20,13 +20,8 @@ VTX -> пилот: штатное изображение с OSD
 
 ## 2. Подключение Raspberry
 
-```text
-FC TX  -> Pi pin 10 (GPIO15, /dev/ttyAMA0 RX)
-Pi pin 8 (GPIO14, /dev/ttyAMA0 TX) -> VTX RX
-VTX TX -> Pi pin 29 (GPIO5, /dev/ttyAMA2 RX)
-Pi pin 7 (GPIO4, /dev/ttyAMA2 TX) -> FC RX
-Общая земля: FC GND, VTX GND и Pi GND (например, pin 6)
-```
+Подробная карта сторон и контактов хранится в
+[`docs/WIRING_SOURCE_OF_TRUTH.md`](docs/WIRING_SOURCE_OF_TRUTH.md).
 
 На Pi включены `dtoverlay=uart0-pi5` и `dtoverlay=uart2-pi5`; консоль на
 UART отключена. Оба канала работают 115200, 8N1, без аппаратного управления.
