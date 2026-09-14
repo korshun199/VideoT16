@@ -9,6 +9,7 @@ from src.displayport_proxy import (
     build_msp_frame,
     displayport_write_string,
     DisplayPortOverlay,
+    CanvasMirror,
 )
 
 
@@ -48,6 +49,16 @@ class DisplayPortProxyTests(unittest.TestCase):
     def test_outgoing_displayport_uses_fc_to_device_header(self) -> None:
         """Исходящий пакет имеет направление FC к внешнему OSD-устройству."""
         self.assertEqual(displayport_write_string(0, 0, "FPV-DRON")[:3], b"$M>")
+
+    def test_canvas_mirror_preserves_betaflight_glyph_code(self) -> None:
+        """Штатный индекс символа до 255 не превращается в вопросительный знак."""
+        mirror = CanvasMirror()
+        packet = build_msp_frame(
+            MSP_DISPLAYPORT, bytes((MSP_DP_WRITE_STRING, 2, 3, 0, 0xC1))
+        )
+        mirror.apply(packet)
+        _columns, _rows, lines = mirror.snapshot()
+        self.assertEqual(ord(lines[2][3]), 0xC1)
 
     def test_overlay_adds_ascii_system_status(self) -> None:
         """Системный статус формируется отдельной ASCII-строкой для VTX."""

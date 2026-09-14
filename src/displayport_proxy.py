@@ -132,7 +132,9 @@ class CanvasMirror:
                             break
                         x, y = column + offset, row
                         if 0 <= x < self.columns and 0 <= y < self.rows:
-                            self._grid[y][x] = chr(value) if 32 <= value < 127 else "?"
+                            # Сохраняем код glyph 0..255: Betaflight передаёт
+                            # штатные иконки не ASCII-символами, а индексами MCM.
+                            self._grid[y][x] = chr(value)
 
     def snapshot(self) -> tuple[int, int, tuple[str, ...]]:
         """Возвращает согласованный снимок сетки для веб-рендера."""
