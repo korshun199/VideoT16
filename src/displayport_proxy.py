@@ -271,11 +271,11 @@ class DisplayPortOverlay:
         """Отправляет строку в сторону цифрового видеопередатчика."""
         self._proxy.send_displayport(displayport_write_string(column, row, text))
 
-    def clear(self) -> None:
-        """Затирает только строки, добавленные нашей рамкой."""
+    def clear(self, redraw: bool = True) -> None:
+        """Затирает только строки нашей рамки, при необходимости обновляя экран."""
         for column, row, text in self._last_lines:
             self._send(column, row, " " * len(text))
-        if self._last_lines:
+        if redraw and self._last_lines:
             self._proxy.send_displayport(displayport_draw_screen())
         self._last_lines = ()
 
@@ -323,7 +323,8 @@ class DisplayPortOverlay:
         if now - self._last_osd_update < self._osd_update_interval:
             return
         self._last_osd_update = now
-        self.clear()
+        # Внутри обновления не показываем промежуточный пустой экран.
+        self.clear(redraw=False)
         left = max(0, min(self._columns - 8, round(x1 * self._columns / max(1, width))))
         right = max(left + 6, min(self._columns - 1, round(x2 * self._columns / max(1, width))))
         top = max(1, min(self._rows - 3, round(y1 * self._rows / max(1, height))))
