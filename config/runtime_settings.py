@@ -16,9 +16,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "model_path": "models/fpv_drone_custom_320.onnx",
         "camera_source": "easycap",
         "digital_camera_device": "",
-        "confidence_percent": 60,
-        "inference_size": 256,
-        "inference_interval": 2,
+        "confidence_percent": 40,
+        "inference_size": 320,
+        "inference_interval": 1,
         "generic_label": False,
     },
     "camera": {

@@ -34,7 +34,7 @@ class RuntimeSettingsTests(unittest.TestCase):
             loaded = load_settings(path)
 
         self.assertEqual(saved["detection"]["confidence_percent"], 73)
-        self.assertEqual(loaded["detection"]["inference_size"], 256)
+        self.assertEqual(loaded["detection"]["inference_size"], 320)
         self.assertIn("arm_banner", loaded)
 
     def test_invalid_confidence_is_rejected(self):

@@ -75,7 +75,7 @@ journalctl -u videot16.service -n 50 --no-pager
 ```
 
 Ожидается запуск `launcher.py`, расшифровка только в `/dev/shm`, EasyCap,
-модель `models/fpv_drone_best.onnx`, UART `/dev/ttyAMA0` -> `/dev/ttyAMA2`,
+модель `models/fpv_drone_custom_320.onnx`, вход 320x320, UART `/dev/ttyAMA0` -> `/dev/ttyAMA2`,
 а также веб-порт `127.0.0.1:8081`.
 
 ## 7. Проверить систему

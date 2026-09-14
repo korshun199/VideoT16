@@ -10,7 +10,7 @@
 - тесты `tests/`;
 - документация проекта;
 - `requirements-raspberry.txt`;
-- только утверждённая модель `models/fpv_drone_best.onnx`;
+- только утверждённая модель `models/fpv_drone_custom_320.onnx`;
 - исходники средств безопасности без production-секретов;
 - контрольный список файлов и SHA-256 манифест.
 

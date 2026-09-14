@@ -13,7 +13,8 @@
 
 - [Оригинальные веса `best.pt` на Hugging Face](https://huggingface.co/TomSmail/drone-yolo-v1/resolve/main/best.pt);
 - [Копия `.pt` в GitHub](https://raw.githubusercontent.com/korshun199/VideoT16/main/models/fpv_drone_best.pt);
-- [Копия `.onnx` в GitHub](https://raw.githubusercontent.com/korshun199/VideoT16/main/models/fpv_drone_best.onnx).
+- рабочая Raspberry-модель: `models/fpv_drone_custom_320.onnx`;
+- [Копия базовой `.onnx` в GitHub](https://raw.githubusercontent.com/korshun199/VideoT16/main/models/fpv_drone_best.onnx).
 
 Автоматическое восстановление с проверкой целостности:
 

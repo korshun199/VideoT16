@@ -53,7 +53,7 @@ include_path scripts/osd_test.py
 include_path scripts/train_fpv.py
 include_path scripts/install_raspberry_service.sh
 include_path scripts/setup_ubuntu.sh
-include_path models/fpv_drone_best.onnx
+include_path models/fpv_drone_custom_320.onnx
 include_path models/FPV_MODEL.md
 
 # Исходники безопасности полезны для разработки, но production-файлы и auto.py

@@ -10,12 +10,12 @@ CAMERA_DEVICE="/dev/video0"  # Внешняя USB-камера Brio 90.
 
 # Подпись и объединённая модель FPV для текущего теста.
 OBJECT_LABEL="FPV-DRON"
-MODEL_PATH="$PROJECT_DIR/runs/fpv_training/fpv_quadcopter_merged/weights/best.onnx"
-INFERENCE_SIZE="640"
+MODEL_PATH="$PROJECT_DIR/models/fpv_drone_custom_320.onnx"
+INFERENCE_SIZE="320"
 
 
-CONFIDENCE_PERCENT="50"
-INFERENCE_INTERVAL="2"
+CONFIDENCE_PERCENT="40"
+INFERENCE_INTERVAL="1"
 CAMERA_FPS="30"
 
 # Проверяет обязательные файлы и устройства до запуска.
