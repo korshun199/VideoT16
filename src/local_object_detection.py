@@ -907,7 +907,8 @@ def run(args: argparse.Namespace) -> int:
         displayport_serials = (fc_serial, vtx_serial)
         displayport_proxy = DisplayPortProxy(fc_serial, vtx_serial)
         displayport_overlay = DisplayPortOverlay(
-            displayport_proxy, args.displayport_cols, args.displayport_rows
+            displayport_proxy, args.displayport_cols, args.displayport_rows,
+            initialize=False,
         )
         print(
             f"Цифровой OSD подключён: FC={args.displayport_fc_port} "

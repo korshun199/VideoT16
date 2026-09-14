@@ -176,8 +176,11 @@ class DisplayPortProxy:
 class DisplayPortOverlay:
     """Добавляет рамку и подпись в цифровую OSD-сетку."""
 
-    def __init__(self, proxy: DisplayPortProxy, columns: int = 50, rows: int = 18) -> None:
-        """Создаёт наложение для HD-canvas DisplayPort."""
+    def __init__(
+        self, proxy: DisplayPortProxy, columns: int = 50, rows: int = 18,
+        initialize: bool = True,
+    ) -> None:
+        """Создаёт наложение DisplayPort с необязательной инициализацией."""
         if columns < 10 or rows < 6:
             raise ValueError("Canvas DisplayPort слишком мал")
         self._proxy = proxy
@@ -187,12 +190,15 @@ class DisplayPortOverlay:
         self._last_status = ""
         self._last_status_column = 0
         self._last_status_send = 0.0
-        self._proxy.set_refresh_callback(self.refresh)
-        # Инициализируем VTX как HD DisplayPort-устройство до первой рамки.
-        self._proxy.send_displayport(displayport_heartbeat())
-        self._proxy.send_displayport(displayport_options(1))
-        self._proxy.send_displayport(displayport_clear_screen())
-        self._proxy.send_displayport(displayport_draw_screen())
+        callback_setter = getattr(self._proxy, "set_refresh_callback", None)
+        if callback_setter:
+            callback_setter(self.refresh)
+        if initialize:
+            # Автономный тест может инициализировать пустой экран VTX.
+            self._proxy.send_displayport(displayport_heartbeat())
+            self._proxy.send_displayport(displayport_options(1))
+            self._proxy.send_displayport(displayport_clear_screen())
+            self._proxy.send_displayport(displayport_draw_screen())
 
     def _send(self, column: int, row: int, text: str) -> None:
         """Отправляет строку в сторону цифрового видеопередатчика."""

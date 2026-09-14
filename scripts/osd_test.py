@@ -30,6 +30,11 @@ class VtxOnlyProxy:
         self._port.write(packet)
         self._port.flush()
 
+    def set_refresh_callback(self, _callback) -> None:
+        """Принимает callback прокси для совместимости с рабочим наложением."""
+        # В автономном режиме FC отсутствует, поэтому повторный вызов
+        # экрана выполняется непосредственно главным циклом теста.
+
 
 def draw_test_screen(overlay: DisplayPortOverlay) -> None:
     """Повторно отправляет тестовую рамку для восстановления после контакта."""
