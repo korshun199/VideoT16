@@ -21,7 +21,7 @@ from src.onnx_detector import OnnxDetector
 
 КОРЕНЬ = Path(__file__).resolve().parent
 КАТАЛОГ_ФОТО = КОРЕНЬ / "../dataset/fpv/object_photos/images"
-МОДЕЛЬ = КОРЕНЬ / "../runs/fpv_training/fpv_quadcopter_merged/weights/best.onnx"
+МОДЕЛЬ = КОРЕНЬ / "../models/fpv_drone_custom_320.onnx"
 КАТАЛОГ_ВИДЕО = КОРЕНЬ / "../dataset/fpv/object_photos/videos"
 
 ВИДЕО_БЕЗ_РАСПОЗНАВАНИЯ = КАТАЛОГ_ВИДЕО / "clean.mp4"
@@ -36,8 +36,8 @@ FPS_ВИДЕО = 5
 ВЫСОТА_ВИДЕО = 720
 
 # Настройки распознавания.
-ПОРОГ_УВЕРЕННОСТИ = 0.60
-РАЗМЕР_МОДЕЛИ = 640
+ПОРОГ_УВЕРЕННОСТИ = 0.40
+РАЗМЕР_МОДЕЛИ = 320
 ПОДПИСЬ_ОБЪЕКТА = "FPV-DRON"
 
 # Размер окна программы на ноутбуке.
