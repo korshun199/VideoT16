@@ -185,6 +185,7 @@ class DisplayPortOverlay:
         self._rows = rows
         self._last_lines: tuple[tuple[int, int, str], ...] = ()
         self._last_status = ""
+        self._last_status_column = 0
         self._last_status_send = 0.0
         self._proxy.set_refresh_callback(self.refresh)
         # Инициализируем VTX как HD DisplayPort-устройство до первой рамки.
@@ -214,17 +215,19 @@ class DisplayPortOverlay:
         if clean_text == self._last_status and now - self._last_status_send < 1.0:
             return
         if clean_text != self._last_status and self._last_status:
-            self._send(0, self._rows - 1, " " * len(self._last_status))
+            self._send(self._last_status_column, 0, " " * len(self._last_status))
+        status_column = max(0, self._columns - len(clean_text))
         if clean_text:
-            self._send(0, self._rows - 1, clean_text)
+            self._send(status_column, 0, clean_text)
         self._last_status = clean_text
+        self._last_status_column = status_column
         self._last_status_send = now
         self._proxy.send_displayport(displayport_draw_screen())
 
     def refresh(self) -> None:
         """Повторяет нашу рамку и статус после перерисовки OSD полётником."""
         if self._last_status:
-            self._send(0, self._rows - 1, self._last_status)
+            self._send(self._last_status_column, 0, self._last_status)
         for column, row, text in self._last_lines:
             self._send(column, row, text)
         if self._last_status or self._last_lines:
