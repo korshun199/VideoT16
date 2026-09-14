@@ -35,6 +35,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "flight_controller_osd_enabled": True,
         "drm_device": "/dev/dri/by-path/platform-1f00144000.vec-card",
         "flight_controller_port": "/dev/ttyACM0",
+        # Частота обновления зеркала OSD в веб-просмотре, не частота распознавания.
+        "preview_fps": 5.0,
     },
     "object": {
         "font": "FONT_HERSHEY_SIMPLEX",
@@ -152,6 +154,8 @@ def save_settings(settings: dict[str, Any], path: Path = SETTINGS_PATH) -> dict[
         raise ValueError("inference_size должен быть от 32 до 1280")
     if not 1 <= int(detection["inference_interval"]) <= 30:
         raise ValueError("inference_interval должен быть от 1 до 30")
+    if not 1 <= float(normalized["video_output"]["preview_fps"]) <= 25:
+        raise ValueError("video_output.preview_fps должен быть от 1 до 25")
     video_output = normalized["video_output"]
     if not isinstance(video_output["j7_enabled"], bool):
         raise ValueError("video_output.j7_enabled должен быть true или false")

@@ -937,7 +937,8 @@ def run(args: argparse.Namespace) -> int:
     if args.preview_port:
         from src.preview import PreviewServer
 
-        preview_server = PreviewServer(args.preview_host, args.preview_port)
+        preview_fps = float(runtime_settings["video_output"].get("preview_fps", 5.0))
+        preview_server = PreviewServer(args.preview_host, args.preview_port, preview_fps)
     if args.drm:
         from src.drm_output import DrmOutput
 
@@ -1014,6 +1015,8 @@ def run(args: argparse.Namespace) -> int:
         if not inference_interval_from_command_line:
             args.inference_interval = max(1, int(detection["inference_interval"]))
         args.generic_label = bool(detection["generic_label"])
+        if preview_server is not None:
+            preview_server.set_update_fps(float(settings["video_output"]["preview_fps"]))
         predict_args["conf"] = args.confidence
         predict_args["imgsz"] = args.inference_size
         apply_osd_settings(

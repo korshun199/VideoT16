@@ -13,12 +13,12 @@ from src.mcm_font import McmFont
 class PreviewServer:
     """Отдаёт последний кадр распознавания в браузер без хранения видеофайлов."""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8081) -> None:
+    def __init__(self, host: str = "127.0.0.1", port: int = 8081, update_fps: float = 5.0) -> None:
         """Запускает HTTP-сервер в фоновом потоке."""
         self._condition = threading.Condition()
         self._jpeg: bytes | None = None
         self._last_update = 0.0
-        self._update_interval = 0.2  # Веб: 5 кадров/с, чтобы не перегружать Raspberry.
+        self._update_interval = 1.0 / max(1.0, float(update_fps))
         self._mcm_font = McmFont(Path(__file__).resolve().parents[1] / "assets/osd/vision.mcm")
         self._closed = False
         state = self
@@ -75,6 +75,12 @@ class PreviewServer:
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
         print(f"Веб-просмотр: http://{host}:{port}/", flush=True)
+
+    def set_update_fps(self, update_fps: float) -> None:
+        """Меняет частоту веб-кадров без изменения скорости камеры и инференса."""
+        if not 1.0 <= float(update_fps) <= 25.0:
+            raise ValueError("Частота веб-просмотра должна быть от 1 до 25 FPS")
+        self._update_interval = 1.0 / float(update_fps)
 
     def update(self, frame, canvas_mirror=None) -> None:
         """Кодирует кадр с зеркалом Canvas OSD в JPEG для веб-просмотра."""

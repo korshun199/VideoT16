@@ -42,6 +42,12 @@ class RuntimeSettingsTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 save_settings({"detection": {"confidence_percent": 101}}, Path(directory) / "x.json")
 
+    def test_invalid_preview_fps_is_rejected(self):
+        """Частота веб-OSD ограничена безопасным диапазоном."""
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError):
+                save_settings({"video_output": {"preview_fps": 26}}, Path(directory) / "x.json")
+
     def test_colors_and_offsets_are_applied(self):
         settings = load_settings()
         settings["osd_text"]["color_rgb"] = [10, 20, 30]
