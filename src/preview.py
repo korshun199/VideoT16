@@ -5,6 +5,9 @@ from __future__ import annotations
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+from src.mcm_font import McmFont
 
 
 class PreviewServer:
@@ -16,6 +19,7 @@ class PreviewServer:
         self._jpeg: bytes | None = None
         self._last_update = 0.0
         self._update_interval = 0.2  # Веб: 5 кадров/с, чтобы не перегружать Raspberry.
+        self._mcm_font = McmFont(Path(__file__).resolve().parents[1] / "assets/osd/vision.mcm")
         self._closed = False
         state = self
 
@@ -74,8 +78,6 @@ class PreviewServer:
 
     def update(self, frame, canvas_mirror=None) -> None:
         """Кодирует кадр с зеркалом Canvas OSD в JPEG для веб-просмотра."""
-        import cv2
-
         now = time.monotonic()
         if now - self._last_update < self._update_interval:
             return
@@ -83,21 +85,7 @@ class PreviewServer:
 
         if canvas_mirror is not None:
             columns, rows, lines = canvas_mirror.snapshot()
-            height, width = frame.shape[:2]
-            cell_width = width / columns
-            cell_height = height / rows
-            font_scale = max(0.35, min(0.7, cell_height / 32))
-            for row, line in enumerate(lines):
-                text = line.rstrip()
-                if not text:
-                    continue
-                cv2.putText(
-                    frame, text, (2, int((row + 1) * cell_height - 4)),
-                    # Белый моноширинный стиль приближает отображение Canvas
-                    # в вебе к тому, что обычно видно в очках.
-                    cv2.FONT_HERSHEY_PLAIN, font_scale, (255, 255, 255), 1,
-                    cv2.LINE_AA,
-                )
+            self._mcm_font.draw(frame, lines, columns, rows)
 
         # Умеренное качество снижает задержку MJPEG на Raspberry Pi.
         ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 55])
