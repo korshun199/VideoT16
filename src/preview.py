@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -13,6 +14,8 @@ class PreviewServer:
         """Запускает HTTP-сервер в фоновом потоке."""
         self._condition = threading.Condition()
         self._jpeg: bytes | None = None
+        self._last_update = 0.0
+        self._update_interval = 0.2  # Веб: 5 кадров/с, чтобы не перегружать Raspberry.
         self._closed = False
         state = self
 
@@ -73,6 +76,11 @@ class PreviewServer:
         """Кодирует кадр с зеркалом Canvas OSD в JPEG для веб-просмотра."""
         import cv2
 
+        now = time.monotonic()
+        if now - self._last_update < self._update_interval:
+            return
+        self._last_update = now
+
         if canvas_mirror is not None:
             columns, rows, lines = canvas_mirror.snapshot()
             height, width = frame.shape[:2]
@@ -85,7 +93,9 @@ class PreviewServer:
                     continue
                 cv2.putText(
                     frame, text, (2, int((row + 1) * cell_height - 4)),
-                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 255, 0), 1,
+                    # Белый моноширинный стиль приближает отображение Canvas
+                    # в вебе к тому, что обычно видно в очках.
+                    cv2.FONT_HERSHEY_PLAIN, font_scale, (255, 255, 255), 1,
                     cv2.LINE_AA,
                 )
 
