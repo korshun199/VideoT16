@@ -898,14 +898,16 @@ def run(args: argparse.Namespace) -> int:
         print(f"INAV подключён: {args.inav_port} (только чтение MSP)", flush=True)
     displayport_proxy = None
     displayport_overlay = None
+    displayport_mirror = None
     displayport_serials = ()
     if args.displayport_vtx_only and args.displayport_vtx_port:
         import serial
-        from src.displayport_proxy import DisplayPortOverlay, SingleDisplayPortProxy
+        from src.displayport_proxy import CanvasMirror, DisplayPortOverlay, SingleDisplayPortProxy
 
         vtx_serial = serial.Serial(args.displayport_vtx_port, 115200, timeout=0.05)
+        displayport_mirror = CanvasMirror(args.displayport_cols, args.displayport_rows)
         displayport_serials = (vtx_serial,)
-        displayport_proxy = SingleDisplayPortProxy(vtx_serial)
+        displayport_proxy = SingleDisplayPortProxy(vtx_serial, displayport_mirror)
         displayport_overlay = DisplayPortOverlay(
             displayport_proxy, args.displayport_cols, args.displayport_rows,
             initialize=True,
@@ -913,12 +915,13 @@ def run(args: argparse.Namespace) -> int:
         print(f"Собственный цифровой OSD: VTX={args.displayport_vtx_port}, FC=OFF", flush=True)
     elif args.displayport_fc_port and args.displayport_vtx_port:
         import serial
-        from src.displayport_proxy import DisplayPortOverlay, DisplayPortProxy
+        from src.displayport_proxy import CanvasMirror, DisplayPortOverlay, DisplayPortProxy
 
         fc_serial = serial.Serial(args.displayport_fc_port, 115200, timeout=0.05)
         vtx_serial = serial.Serial(args.displayport_vtx_port, 115200, timeout=0.05)
+        displayport_mirror = CanvasMirror(args.displayport_cols, args.displayport_rows)
         displayport_serials = (fc_serial, vtx_serial)
-        displayport_proxy = DisplayPortProxy(fc_serial, vtx_serial)
+        displayport_proxy = DisplayPortProxy(fc_serial, vtx_serial, displayport_mirror)
         displayport_overlay = DisplayPortOverlay(
             displayport_proxy, args.displayport_cols, args.displayport_rows,
             initialize=False,
@@ -1163,7 +1166,10 @@ def run(args: argparse.Namespace) -> int:
             if drm_output:
                 drm_output.write(annotated)
             if preview_server:
-                preview_server.update(annotated)
+                # В Pilot View показываем исходное видео и тот же Canvas,
+                # который уходит в Ascent, без отдельной пиксельной рамки OpenCV.
+                preview_frame = frame.copy() if displayport_overlay else annotated
+                preview_server.update(preview_frame, displayport_mirror if displayport_overlay else None)
             frame_number += 1
 
             if not args.headless:

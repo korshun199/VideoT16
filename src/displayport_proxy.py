@@ -106,13 +106,48 @@ def displayport_options(canvas: int = 1) -> bytes:
     return build_msp_frame(MSP_DISPLAYPORT, bytes((MSP_DP_OPTIONS, canvas)))
 
 
+class CanvasMirror:
+    """Хранит логический Canvas OSD для зеркального веб-просмотра."""
+
+    def __init__(self, columns: int = 50, rows: int = 18) -> None:
+        """Создаёт пустую сетку Canvas."""
+        self.columns, self.rows = columns, rows
+        self._grid = [[" " for _ in range(columns)] for _ in range(rows)]
+        self._parser = MspV1Parser()
+        self._lock = threading.Lock()
+
+    def apply(self, data: bytes) -> None:
+        """Применяет проверенные DisplayPort-команды к копии экрана."""
+        for frame in self._parser.feed(data):
+            if frame.command != MSP_DISPLAYPORT or not frame.payload:
+                continue
+            payload = frame.payload
+            with self._lock:
+                if payload[0] == MSP_DP_CLEAR_SCREEN:
+                    self._grid = [[" " for _ in range(self.columns)] for _ in range(self.rows)]
+                elif payload[0] == MSP_DP_WRITE_STRING and len(payload) >= 5:
+                    row, column = payload[1], payload[2]
+                    for offset, value in enumerate(payload[4:]):
+                        if value == 0:
+                            break
+                        x, y = column + offset, row
+                        if 0 <= x < self.columns and 0 <= y < self.rows:
+                            self._grid[y][x] = chr(value) if 32 <= value < 127 else "?"
+
+    def snapshot(self) -> tuple[int, int, tuple[str, ...]]:
+        """Возвращает согласованный снимок сетки для веб-рендера."""
+        with self._lock:
+            return self.columns, self.rows, tuple("".join(row) for row in self._grid)
+
+
 class DisplayPortProxy:
     """Пересылает MSP между полётником и цифровым видеопередатчиком."""
 
-    def __init__(self, flight_controller_port, video_port) -> None:
+    def __init__(self, flight_controller_port, video_port, mirror: CanvasMirror | None = None) -> None:
         """Принимает два уже открытых pyserial-порта и запускает мост."""
         self._fc = flight_controller_port
         self._video = video_port
+        self._mirror = mirror
         self._fc_parser = MspV1Parser()
         self._refresh_callback = None
         self._refresh_timer = None
@@ -149,6 +184,8 @@ class DisplayPortProxy:
                     # Отслеживаем только команду DRAW_SCREEN в копии данных.
                     # Исходные байты FC уже переданы без изменения.
                     frames = self._fc_parser.feed(data)
+                    if self._mirror:
+                        self._mirror.apply(data)
                     if any(
                         frame.command == MSP_DISPLAYPORT
                         and frame.payload[:1] == bytes((MSP_DP_DRAW_SCREEN,))
@@ -163,6 +200,8 @@ class DisplayPortProxy:
         with self._write_lock:
             self._video.write(packet)
             self._video.flush()
+        if self._mirror:
+            self._mirror.apply(packet)
 
     def close(self) -> None:
         """Останавливает оба направления прокси."""
@@ -176,9 +215,10 @@ class DisplayPortProxy:
 class SingleDisplayPortProxy:
     """Передаёт только собственный OSD Raspberry в цифровой VTX."""
 
-    def __init__(self, video_port) -> None:
+    def __init__(self, video_port, mirror: CanvasMirror | None = None) -> None:
         """Сохраняет единственный UART стороны Ascent."""
         self._video = video_port
+        self._mirror = mirror
 
     def set_refresh_callback(self, _callback) -> None:
         """Сохраняет совместимость с наложением без канала FC."""
@@ -189,6 +229,8 @@ class SingleDisplayPortProxy:
             raise ValueError("Разрешено добавлять только исходящий MSPv1-пакет")
         self._video.write(packet)
         self._video.flush()
+        if self._mirror:
+            self._mirror.apply(packet)
 
     def close(self) -> None:
         """Оставляет закрытие UART владельцу процесса."""

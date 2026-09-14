@@ -69,9 +69,25 @@ class PreviewServer:
         self._thread.start()
         print(f"Веб-просмотр: http://{host}:{port}/", flush=True)
 
-    def update(self, frame) -> None:
-        """Кодирует обработанный кадр в JPEG для веб-просмотра."""
+    def update(self, frame, canvas_mirror=None) -> None:
+        """Кодирует кадр с зеркалом Canvas OSD в JPEG для веб-просмотра."""
         import cv2
+
+        if canvas_mirror is not None:
+            columns, rows, lines = canvas_mirror.snapshot()
+            height, width = frame.shape[:2]
+            cell_width = width / columns
+            cell_height = height / rows
+            font_scale = max(0.35, min(0.7, cell_height / 32))
+            for row, line in enumerate(lines):
+                text = line.rstrip()
+                if not text:
+                    continue
+                cv2.putText(
+                    frame, text, (2, int((row + 1) * cell_height - 4)),
+                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 255, 0), 1,
+                    cv2.LINE_AA,
+                )
 
         # Умеренное качество снижает задержку MJPEG на Raspberry Pi.
         ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 55])
