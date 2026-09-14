@@ -15,6 +15,7 @@
     "drm_device": "/dev/dri/card1",
     "flight_controller_port": "/dev/ttyACM0",
     "preview_fps": 5.0,
+    "displayport_osd_fps": 1.0,
     "displayport_proxy_enabled": true,
     "displayport_fc_port": "/dev/ttyAMA0",
     "displayport_vtx_port": "/dev/ttyAMA2",

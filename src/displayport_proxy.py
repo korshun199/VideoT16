@@ -255,6 +255,8 @@ class DisplayPortOverlay:
         self._last_status = ""
         self._last_status_column = 0
         self._last_status_send = 0.0
+        self._osd_update_interval = 1.0
+        self._last_osd_update = 0.0
         callback_setter = getattr(self._proxy, "set_refresh_callback", None)
         if callback_setter:
             callback_setter(self.refresh)
@@ -281,6 +283,10 @@ class DisplayPortOverlay:
         """Выводит системную температуру и нагрузку CPU в нижней строке OSD."""
         clean_text = text.encode("ascii", "replace").decode("ascii")[: self._columns]
         now = time.monotonic()
+        # Confidence меняется часто, но наше добавочное OSD обновляем не чаще
+        # заданной частоты. Штатные байты FC этим ограничением не затрагиваются.
+        if now - self._last_osd_update < self._osd_update_interval:
+            return
         # Повторяем неизменный статус раз в секунду: TX не сообщает об обрыве,
         # поэтому после восстановления провода Ascent должен получить OSD снова.
         if clean_text == self._last_status and now - self._last_status_send < 1.0:
@@ -293,7 +299,14 @@ class DisplayPortOverlay:
         self._last_status = clean_text
         self._last_status_column = status_column
         self._last_status_send = now
+        self._last_osd_update = now
         self._proxy.send_displayport(displayport_draw_screen())
+
+    def set_update_fps(self, update_fps: float) -> None:
+        """Настраивает частоту изменений только нашего OSD на VTX."""
+        if not 0.2 <= float(update_fps) <= 10.0:
+            raise ValueError("Частота OSD должна быть от 0.2 до 10 FPS")
+        self._osd_update_interval = 1.0 / float(update_fps)
 
     def refresh(self) -> None:
         """Повторяет нашу рамку и статус после перерисовки OSD полётником."""
@@ -306,6 +319,10 @@ class DisplayPortOverlay:
 
     def update(self, x1: int, y1: int, x2: int, y2: int, width: int, height: int) -> None:
         """Преобразует пиксельную рамку в ASCII-команды DisplayPort."""
+        now = time.monotonic()
+        if now - self._last_osd_update < self._osd_update_interval:
+            return
+        self._last_osd_update = now
         self.clear()
         left = max(0, min(self._columns - 8, round(x1 * self._columns / max(1, width))))
         right = max(left + 6, min(self._columns - 1, round(x2 * self._columns / max(1, width))))

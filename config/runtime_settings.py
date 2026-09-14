@@ -37,6 +37,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "flight_controller_port": "/dev/ttyACM0",
         # Частота обновления зеркала OSD в веб-просмотре, не частота распознавания.
         "preview_fps": 5.0,
+        # Частота обновления только добавочного OSD VideoT16 на VTX.
+        "displayport_osd_fps": 1.0,
     },
     "object": {
         "font": "FONT_HERSHEY_SIMPLEX",
@@ -156,6 +158,8 @@ def save_settings(settings: dict[str, Any], path: Path = SETTINGS_PATH) -> dict[
         raise ValueError("inference_interval должен быть от 1 до 30")
     if not 1 <= float(normalized["video_output"]["preview_fps"]) <= 25:
         raise ValueError("video_output.preview_fps должен быть от 1 до 25")
+    if not 0.2 <= float(normalized["video_output"]["displayport_osd_fps"]) <= 10:
+        raise ValueError("video_output.displayport_osd_fps должен быть от 0.2 до 10")
     video_output = normalized["video_output"]
     if not isinstance(video_output["j7_enabled"], bool):
         raise ValueError("video_output.j7_enabled должен быть true или false")

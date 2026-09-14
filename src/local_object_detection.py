@@ -926,6 +926,9 @@ def run(args: argparse.Namespace) -> int:
             displayport_proxy, args.displayport_cols, args.displayport_rows,
             initialize=False,
         )
+        displayport_overlay.set_update_fps(
+            float(runtime_settings["video_output"].get("displayport_osd_fps", 1.0))
+        )
         print(
             f"Цифровой OSD подключён: FC={args.displayport_fc_port} "
             f"VTX={args.displayport_vtx_port}",
@@ -1017,6 +1020,10 @@ def run(args: argparse.Namespace) -> int:
         args.generic_label = bool(detection["generic_label"])
         if preview_server is not None:
             preview_server.set_update_fps(float(settings["video_output"]["preview_fps"]))
+        if displayport_overlay is not None:
+            displayport_overlay.set_update_fps(
+                float(settings["video_output"]["displayport_osd_fps"])
+            )
         predict_args["conf"] = args.confidence
         predict_args["imgsz"] = args.inference_size
         apply_osd_settings(
