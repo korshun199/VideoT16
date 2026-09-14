@@ -78,6 +78,8 @@ class PreviewServer:
 
     def update(self, frame, canvas_mirror=None) -> None:
         """Кодирует кадр с зеркалом Canvas OSD в JPEG для веб-просмотра."""
+        import cv2
+
         now = time.monotonic()
         if now - self._last_update < self._update_interval:
             return
