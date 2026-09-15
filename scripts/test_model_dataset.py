@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 
 import cv2
@@ -24,6 +25,7 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--split", choices=("train", "val", "all"), default="val")
     parser.add_argument("--model", type=Path, default=DEFAULT_MODEL)
     parser.add_argument("--confidence", type=float, default=0.25, help="порог 0..1")
+    parser.add_argument("--size", type=int, default=320, help="размер входа модели")
     parser.add_argument("--limit", type=int, default=0, help="максимум кадров; 0 — все")
     parser.add_argument("--interval", type=int, default=700, help="пауза показа в миллисекундах")
     parser.add_argument("--no-window", action="store_true", help="только отчёт без окна")
@@ -197,14 +199,17 @@ def main() -> int:
     args = arguments()
     if not 0.0 < args.confidence <= 1.0:
         raise SystemExit("--confidence должен быть от 0 до 1")
+    if args.size < 32 or args.size % 32:
+        raise SystemExit("--size должен быть не меньше 32 и кратен 32")
     if not args.model.is_file():
         raise SystemExit(f"Модель не найдена: {args.model}")
     paths = image_paths(args.split, args.with_backgrounds)
     if args.limit > 0:
         paths = paths[:args.limit]
-    detector = OnnxDetector(args.model, args.confidence, False, 320, "FPV-DRON")
+    detector = OnnxDetector(args.model, args.confidence, False, args.size, "FPV-DRON")
     true_positive = false_positive = false_negative = 0
     confidence_values: list[float] = []
+    inference_seconds = 0.0
     window = "VideoT16 — тест модели на датасете"
     if not args.no_window:
         DatasetViewer(paths, detector, args.interval, args.show_truth).run()
@@ -217,7 +222,9 @@ def main() -> int:
                 continue
             height, width = frame.shape[:2]
             truth = [to_pixels(box, width, height) for box in ground_truth(path)]
+            started = time.perf_counter()
             detections = detector(frame)
+            inference_seconds += time.perf_counter() - started
             confidence_values.extend(detection.confidence for detection in detections)
             matched_truth: set[int] = set()
             for detection in sorted(detections, key=lambda item: item.confidence, reverse=True):
@@ -238,6 +245,11 @@ def main() -> int:
     print(f"Кадров проверено: {len(paths)}")
     print(f"TP={true_positive} FP={false_positive} FN={false_negative}")
     print(f"Precision={precision:.1%} Recall={recall:.1%} Средняя уверенность={average:.1%}")
+    if inference_seconds:
+        print(
+            f"Скорость={inference_seconds * 1000 / len(paths):.0f} мс/кадр "
+            f"({len(paths) / inference_seconds:.1f} кадр/с)"
+        )
     return 0
 
 

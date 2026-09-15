@@ -1,9 +1,9 @@
 {
   "detection": {
-    "model_path": "models/anti_uav_best.onnx",
+    "model_path": "models/anti_uav_fast_320_int8_pc.onnx",
     "camera_source": "easycap",
     "digital_camera_device": "",
-    "confidence_percent": 50,
+    "confidence_percent": 70,
     "inference_size": 320,
     "inference_interval": 1,
     "generic_label": false

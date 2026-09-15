@@ -13,8 +13,8 @@ fi
 CAMERA_SOURCE="/dev/video0"
 CAMERA_INPUT="easycap"
 DIGITAL_CAMERA_DEVICE=""
-MODEL_PATH="models/fpv_drone_custom_320.onnx"
-CONFIDENCE_PERCENT="40"
+MODEL_PATH="models/anti_uav_fast_320_int8_pc.onnx"
+CONFIDENCE_PERCENT="70"
 INFERENCE_SIZE="320"
 INFERENCE_INTERVAL="1"
 CAMERA_FPS="25"
@@ -139,11 +139,11 @@ import json, sys
 try:
     value = json.load(open("config/runtime_settings.json", encoding="utf-8"))["detection"]["model_path"]
 except (KeyError, OSError, TypeError, ValueError):
-    value = "models/fpv_drone_custom_320.onnx"
+    value = "models/anti_uav_fast_320_int8_pc.onnx"
 if value.startswith("models/") and value.endswith(".onnx") and "/" not in value[7:]:
     print(value)
 else:
-    print("models/fpv_drone_custom_320.onnx")
+    print("models/anti_uav_fast_320_int8_pc.onnx")
 ')"
     if [[ -f "$configured_model" ]]; then
         MODEL_PATH="$configured_model"

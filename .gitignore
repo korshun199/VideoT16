@@ -9,6 +9,7 @@ models/*
 !models/fpv_drone_best.pt
 !models/fpv_drone_best.onnx
 !models/fpv_drone_custom_320.onnx
+!models/anti_uav_fast_320_int8_pc.onnx
 !models/FPV_MODEL.md
 !models/military_vehicle_best.pt
 !models/MILITARY_MODEL.md
