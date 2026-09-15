@@ -10,6 +10,8 @@ from src.displayport_proxy import (
     displayport_write_string,
     DisplayPortOverlay,
     CanvasMirror,
+    DisplayPortProxy,
+    displayport_draw_screen,
 )
 
 
@@ -77,6 +79,50 @@ class DisplayPortProxyTests(unittest.TestCase):
         packet_count = len(proxy.packets)
         overlay.update_status("TEMP 48.2C CPU 37%")
         self.assertEqual(len(proxy.packets), packet_count)
+        overlay._last_status_update -= 2.0
+        overlay.update_status("TEMP 48.2C CPU 37%")
+        self.assertEqual(len(proxy.packets), packet_count)
+
+    def test_overlay_does_not_redraw_unchanged_frame(self) -> None:
+        """Неизменившаяся рамка не мигает из-за повторной перерисовки."""
+        proxy = RecordingProxy()
+        overlay = DisplayPortOverlay(proxy)
+        proxy.packets.clear()
+        overlay.update(100, 80, 300, 260, 640, 480)
+        packet_count = len(proxy.packets)
+        overlay.update(100, 80, 300, 260, 640, 480)
+        self.assertEqual(len(proxy.packets), packet_count)
+
+    def test_overlay_filters_small_confidence_changes(self) -> None:
+        """Малое изменение CONF не создаёт лишнее обновление строки."""
+        proxy = RecordingProxy()
+        overlay = DisplayPortOverlay(proxy)
+        proxy.packets.clear()
+        overlay.update_status("TEMP 48.2C CPU 37% CONF 50%")
+        overlay._last_status_update -= 2.0
+        overlay.update_status("TEMP 48.2C CPU 38% CONF 55%")
+        self.assertTrue(any(b"CONF 50%" in packet for packet in proxy.packets))
+        self.assertFalse(any(b"CONF 55%" in packet for packet in proxy.packets))
+
+    def test_overlay_filters_small_system_status_changes(self) -> None:
+        """Малые изменения температуры и CPU не мерцают в строке OSD."""
+        proxy = RecordingProxy()
+        overlay = DisplayPortOverlay(proxy)
+        proxy.packets.clear()
+        overlay.update_status("TEMP 48.2C CPU 37% CONF 50%")
+        overlay._last_status_update -= 2.0
+        overlay.update_status("TEMP 48.9C CPU 42% CONF 50%")
+        self.assertTrue(any(b"TEMP 48.2C CPU 37% CONF 50%" in packet for packet in proxy.packets))
+        self.assertFalse(any(b"TEMP 48.9C CPU 42%" in packet for packet in proxy.packets))
+
+    def test_proxy_delays_fc_draw_screen(self) -> None:
+        """DRAW_SCREEN FC не выводит промежуточный экран без нашей рамки."""
+        proxy = object.__new__(DisplayPortProxy)
+        proxy._fc_filter_buffer = bytearray()
+        write_packet = displayport_write_string(1, 1, "FC")
+        output = proxy._filter_fc_draw_commands(write_packet + displayport_draw_screen())
+        self.assertIn(write_packet, output)
+        self.assertNotIn(displayport_draw_screen(), output)
 
 if __name__ == "__main__":
     unittest.main()

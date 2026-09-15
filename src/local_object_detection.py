@@ -862,6 +862,7 @@ def run(args: argparse.Namespace) -> int:
             args.generic_label,
             args.inference_size,
             args.object_label,
+            threads=args.cpu_threads or 1,
         )
     else:
         model = YOLO(str(model_path))
@@ -1116,7 +1117,9 @@ def run(args: argparse.Namespace) -> int:
                 if tracked_detections:
                     osd_confidence = tracked_detections[0].confidence
                 else:
-                    osd_confidence = getattr(onnx_detector, "last_best_confidence", 0.0)
+                    # Старый raw confidence не является текущим обнаружением:
+                    # после исчезновения объекта проценты должны исчезать вместе с рамкой.
+                    osd_confidence = 0.0
                 displayport_overlay.update_status(
                     f"{system_status.text()} CONF {round(osd_confidence * 100)}%"
                 )

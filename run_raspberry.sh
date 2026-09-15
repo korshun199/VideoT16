@@ -157,6 +157,7 @@ RUN_ARGS=(
     --inference-size "$INFERENCE_SIZE"
     --inference-interval "$INFERENCE_INTERVAL"
     --camera-fps "$CAMERA_FPS"
+    --cpu-threads "4"
 )
 
 if [[ "$GENERIC_LABEL" == "1" ]]; then

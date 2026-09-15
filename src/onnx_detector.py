@@ -28,6 +28,7 @@ class OnnxDetector:
         generic_label: bool,
         size: int,
         object_label: str | None = None,
+        threads: int = 1,
     ) -> None:
         self.confidence = confidence
         self.generic_label = generic_label
@@ -37,7 +38,7 @@ class OnnxDetector:
         self.last_best_confidence = 0.0
         # Ограничиваем параллелизм: поток камеры и SSH должны оставаться отзывчивыми.
         options = ort.SessionOptions()
-        options.intra_op_num_threads = 1
+        options.intra_op_num_threads = max(1, threads)
         options.inter_op_num_threads = 1
         options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         # В ONNX Runtime 1.29 слияние QuickGelu аварийно завершает процесс

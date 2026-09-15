@@ -10,8 +10,8 @@ from src.realtime import Detection
 class DetectionTracker:
     """Удерживает и плавно перемещает рамку между результатами YOLO."""
 
-    def __init__(self, max_missing: int = 8) -> None:
-        """Создаёт трекер с числом кадров терпения при пропадании объекта."""
+    def __init__(self, max_missing: int = 0) -> None:
+        """Создаёт трекер с немедленным удалением устаревшей рамки."""
         self.max_missing = max_missing
         self._last: Detection | None = None
         self._velocity = (0.0, 0.0)

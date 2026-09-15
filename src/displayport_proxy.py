@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import signal
 import threading
 import time
@@ -153,6 +154,7 @@ class DisplayPortProxy:
         self._fc_parser = MspV1Parser()
         self._refresh_callback = None
         self._refresh_timer = None
+        self._fc_filter_buffer = bytearray()
         self._write_lock = threading.Lock()
         self._stop = threading.Event()
         self._threads = (
@@ -179,12 +181,17 @@ class DisplayPortProxy:
         while not self._stop.is_set():
             data = source.read(source.in_waiting or 1)
             if data:
-                with self._write_lock:
-                    target.write(data)
-                    target.flush()
+                # DRAW_SCREEN полётника временно задерживаем, чтобы сначала
+                # добавить наш слой и показать один составной экран без вспышки.
+                forward_data = data
                 if source is self._fc and self._refresh_callback:
-                    # Отслеживаем только команду DRAW_SCREEN в копии данных.
-                    # Исходные байты FC уже переданы без изменения.
+                    forward_data = self._filter_fc_draw_commands(data)
+                with self._write_lock:
+                    if forward_data:
+                        target.write(forward_data)
+                        target.flush()
+                if source is self._fc and self._refresh_callback:
+                    # Отслеживаем DRAW_SCREEN в исходной копии данных.
                     frames = self._fc_parser.feed(data)
                     if self._mirror:
                         self._mirror.apply(data)
@@ -194,6 +201,43 @@ class DisplayPortProxy:
                         for frame in frames
                     ):
                         self._schedule_refresh()
+
+    def _filter_fc_draw_commands(self, data: bytes) -> bytes:
+        """Удерживает DRAW_SCREEN FC до совместного вывода с нашим OSD."""
+        self._fc_filter_buffer.extend(data)
+        output = bytearray()
+        while self._fc_filter_buffer:
+            marker = self._fc_filter_buffer.find(b"$M")
+            if marker < 0:
+                output.extend(self._fc_filter_buffer)
+                self._fc_filter_buffer.clear()
+                break
+            if marker:
+                output.extend(self._fc_filter_buffer[:marker])
+                del self._fc_filter_buffer[:marker]
+            if len(self._fc_filter_buffer) < 6:
+                break
+            if self._fc_filter_buffer[2] not in (ord("<"), ord(">"), ord("!")):
+                output.append(self._fc_filter_buffer.pop(0))
+                continue
+            payload_size = self._fc_filter_buffer[3]
+            frame_size = payload_size + 6
+            if len(self._fc_filter_buffer) < frame_size:
+                break
+            packet = bytes(self._fc_filter_buffer[:frame_size])
+            del self._fc_filter_buffer[:frame_size]
+            checksum = payload_size ^ packet[4]
+            for byte in packet[5:-1]:
+                checksum ^= byte
+            is_draw = (
+                checksum == packet[-1]
+                and packet[2] != ord("!")
+                and packet[4] == MSP_DISPLAYPORT
+                and packet[5:6] == bytes((MSP_DP_DRAW_SCREEN,))
+            )
+            if not is_draw:
+                output.extend(packet)
+        return bytes(output)
 
     def send_displayport(self, packet: bytes) -> None:
         """Добавляет проверенный пакет OSD в сторону цифрового видеопередатчика."""
@@ -255,6 +299,9 @@ class DisplayPortOverlay:
         self._last_status = ""
         self._last_status_column = 0
         self._last_status_send = 0.0
+        self._last_sent_confidence: int | None = None
+        self._last_sent_cpu: float | None = None
+        self._last_sent_temperature: float | None = None
         self._osd_update_interval = 1.0
         # Статус и рамка должны иметь независимые таймеры: статус не должен
         # блокировать отправку рамки в тот же цикл.
@@ -285,14 +332,58 @@ class DisplayPortOverlay:
     def update_status(self, text: str) -> None:
         """Выводит системную температуру и нагрузку CPU в нижней строке OSD."""
         clean_text = text.encode("ascii", "replace").decode("ascii")[: self._columns]
+        # Не заставляем цифры CONF мерцать от каждого колебания модели:
+        # новое значение отправляем только при изменении минимум на 7 пунктов.
+        confidence_match = re.search(r"CONF\s+(\d+)%", clean_text)
+        if confidence_match:
+            current_confidence = int(confidence_match.group(1))
+            if (
+                self._last_sent_confidence is not None
+                and abs(current_confidence - self._last_sent_confidence) < 7
+            ):
+                clean_text = re.sub(
+                    r"CONF\s+\d+%",
+                    f"CONF {self._last_sent_confidence}%",
+                    clean_text,
+                    count=1,
+                )
+            else:
+                self._last_sent_confidence = current_confidence
+        cpu_match = re.search(r"CPU\s+(\d+(?:\.\d+)?)%", clean_text)
+        if cpu_match:
+            current_cpu = float(cpu_match.group(1))
+            if self._last_sent_cpu is not None and abs(current_cpu - self._last_sent_cpu) < 7:
+                clean_text = re.sub(
+                    r"CPU\s+\d+(?:\.\d+)?%",
+                    f"CPU {self._last_sent_cpu:g}%",
+                    clean_text,
+                    count=1,
+                )
+            else:
+                self._last_sent_cpu = current_cpu
+        temperature_match = re.search(r"TEMP\s+(\d+(?:\.\d+)?)C", clean_text)
+        if temperature_match:
+            current_temperature = float(temperature_match.group(1))
+            if (
+                self._last_sent_temperature is not None
+                and abs(current_temperature - self._last_sent_temperature) < 1
+            ):
+                clean_text = re.sub(
+                    r"TEMP\s+\d+(?:\.\d+)?C",
+                    f"TEMP {self._last_sent_temperature:g}C",
+                    clean_text,
+                    count=1,
+                )
+            else:
+                self._last_sent_temperature = current_temperature
         now = time.monotonic()
         # Confidence меняется часто, но наше добавочное OSD обновляем не чаще
         # заданной частоты. Штатные байты FC этим ограничением не затрагиваются.
         if now - self._last_status_update < self._osd_update_interval:
             return
-        # Повторяем неизменный статус раз в секунду: TX не сообщает об обрыве,
-        # поэтому после восстановления провода Ascent должен получить OSD снова.
-        if clean_text == self._last_status and now - self._last_status_send < 1.0:
+        # Не повторяем неизменный статус: каждый DRAW_SCREEN на некоторых VTX
+        # виден как мигание, даже если текст фактически не изменился.
+        if clean_text == self._last_status:
             return
         if clean_text != self._last_status and self._last_status:
             self._send(self._last_status_column, 0, " " * len(self._last_status))
@@ -325,9 +416,6 @@ class DisplayPortOverlay:
         now = time.monotonic()
         if now - self._last_frame_update < self._osd_update_interval:
             return
-        self._last_frame_update = now
-        # Внутри обновления не показываем промежуточный пустой экран.
-        self.clear(redraw=False)
         left = max(0, min(self._columns - 8, round(x1 * self._columns / max(1, width))))
         right = max(left + 6, min(self._columns - 1, round(x2 * self._columns / max(1, width))))
         top = max(1, min(self._rows - 3, round(y1 * self._rows / max(1, height))))
@@ -339,9 +427,22 @@ class DisplayPortOverlay:
         # Фиксированная подпись цифрового OSD для обнаруженного объекта.
         text = "FPV-DRON"[:inner]
         lines.append((max(0, top - 1), text))
-        for row, value in sorted(lines):
-            self._send(left, row, value)
-        self._last_lines = tuple((left, row, value) for row, value in lines)
+        new_lines = tuple((left, row, value) for row, value in lines)
+        # Не трогаем VTX, если рамка осталась на том же месте.
+        if new_lines == self._last_lines:
+            self._last_frame_update = now
+            return
+        old_by_position = {(column, row): value for column, row, value in self._last_lines}
+        new_by_position = {(column, row): value for column, row, value in new_lines}
+        # Сначала стираем только изменившиеся старые строки, затем записываем новые.
+        for position, value in old_by_position.items():
+            if new_by_position.get(position) != value:
+                self._send(position[0], position[1], " " * len(value))
+        for position, value in new_by_position.items():
+            if old_by_position.get(position) != value:
+                self._send(position[0], position[1], value)
+        self._last_frame_update = now
+        self._last_lines = new_lines
         self._proxy.send_displayport(displayport_draw_screen())
 
 
