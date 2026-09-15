@@ -256,7 +256,10 @@ class DisplayPortOverlay:
         self._last_status_column = 0
         self._last_status_send = 0.0
         self._osd_update_interval = 1.0
-        self._last_osd_update = 0.0
+        # Статус и рамка должны иметь независимые таймеры: статус не должен
+        # блокировать отправку рамки в тот же цикл.
+        self._last_status_update = 0.0
+        self._last_frame_update = 0.0
         callback_setter = getattr(self._proxy, "set_refresh_callback", None)
         if callback_setter:
             callback_setter(self.refresh)
@@ -285,7 +288,7 @@ class DisplayPortOverlay:
         now = time.monotonic()
         # Confidence меняется часто, но наше добавочное OSD обновляем не чаще
         # заданной частоты. Штатные байты FC этим ограничением не затрагиваются.
-        if now - self._last_osd_update < self._osd_update_interval:
+        if now - self._last_status_update < self._osd_update_interval:
             return
         # Повторяем неизменный статус раз в секунду: TX не сообщает об обрыве,
         # поэтому после восстановления провода Ascent должен получить OSD снова.
@@ -299,7 +302,7 @@ class DisplayPortOverlay:
         self._last_status = clean_text
         self._last_status_column = status_column
         self._last_status_send = now
-        self._last_osd_update = now
+        self._last_status_update = now
         self._proxy.send_displayport(displayport_draw_screen())
 
     def set_update_fps(self, update_fps: float) -> None:
@@ -320,9 +323,9 @@ class DisplayPortOverlay:
     def update(self, x1: int, y1: int, x2: int, y2: int, width: int, height: int) -> None:
         """Преобразует пиксельную рамку в ASCII-команды DisplayPort."""
         now = time.monotonic()
-        if now - self._last_osd_update < self._osd_update_interval:
+        if now - self._last_frame_update < self._osd_update_interval:
             return
-        self._last_osd_update = now
+        self._last_frame_update = now
         # Внутри обновления не показываем промежуточный пустой экран.
         self.clear(redraw=False)
         left = max(0, min(self._columns - 8, round(x1 * self._columns / max(1, width))))

@@ -13,10 +13,10 @@ SETTINGS_PATH = Path("config/runtime_settings.json")
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "detection": {
-        "model_path": "models/fpv_drone_custom_320.onnx",
+        "model_path": "models/anti_uav_best.onnx",
         "camera_source": "easycap",
         "digital_camera_device": "",
-        "confidence_percent": 40,
+        "confidence_percent": 50,
         "inference_size": 320,
         "inference_interval": 1,
         "generic_label": False,

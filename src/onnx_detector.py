@@ -87,10 +87,12 @@ class OnnxDetector:
             boxes.append([x1, y1, x2 - x1, y2 - y1])
             kept_scores.append(float(score))
             kept_ids.append(int(class_id))
-        indices = cv2.dnn.NMSBoxes(boxes, kept_scores, self.confidence, 0.45)
         result = []
-        for index in np.array(indices).reshape(-1):
-            x, y, w, h = boxes[int(index)]
+        # Не используем cv2.dnn.NMSBoxes: его результат отличается между
+        # версиями OpenCV на ноутбуке и Raspberry Pi. Свой короткий NMS
+        # одинаково обрабатывает кандидатов на обеих машинах.
+        for index in self._nms_indices(boxes, kept_scores, 0.45):
+            x, y, w, h = boxes[index]
             if self.generic_label:
                 name = "OBJECT"
             elif self.object_label:
@@ -98,7 +100,37 @@ class OnnxDetector:
             else:
                 # У FPV-модели один класс; при отсутствии имён в ONNX
                 # используем понятную подпись вместо служебного OBJECT.
-                model_name = self.names.get(kept_ids[int(index)], "quadcopter")
+                model_name = self.names.get(kept_ids[index], "quadcopter")
                 name = RUSSIAN_DRONE_LABELS.get(model_name, model_name)
-            result.append(Detection(x, y, min(width, x + w), min(height, y + h), name, kept_scores[int(index)]))
+            result.append(Detection(x, y, min(width, x + w), min(height, y + h), name, kept_scores[index]))
         return tuple(result)
+
+    @staticmethod
+    def _nms_indices(boxes: list[list[int]], scores: list[float], overlap: float) -> list[int]:
+        """Возвращает индексы лучших неперекрывающихся рамок."""
+        if not boxes:
+            return []
+        ordered = sorted(range(len(boxes)), key=lambda index: scores[index], reverse=True)
+        selected: list[int] = []
+        while ordered:
+            current = ordered.pop(0)
+            selected.append(current)
+            remaining: list[int] = []
+            for candidate in ordered:
+                if OnnxDetector._box_iou(boxes[current], boxes[candidate]) <= overlap:
+                    remaining.append(candidate)
+            ordered = remaining
+        return selected
+
+    @staticmethod
+    def _box_iou(first: list[int], second: list[int]) -> float:
+        """Считает IoU двух рамок в формате x, y, width, height."""
+        first_x1, first_y1 = first[0], first[1]
+        first_x2, first_y2 = first[0] + first[2], first[1] + first[3]
+        second_x1, second_y1 = second[0], second[1]
+        second_x2, second_y2 = second[0] + second[2], second[1] + second[3]
+        intersection_width = max(0, min(first_x2, second_x2) - max(first_x1, second_x1))
+        intersection_height = max(0, min(first_y2, second_y2) - max(first_y1, second_y1))
+        intersection = intersection_width * intersection_height
+        union = first[2] * first[3] + second[2] * second[3] - intersection
+        return intersection / union if union else 0.0

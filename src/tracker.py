@@ -37,8 +37,12 @@ class DetectionTracker:
     def update(self, detections: tuple[Detection, ...]) -> tuple[Detection, ...]:
         """Выбирает продолжение трека; при пропадании объекта сопровождение прекращается."""
         if not detections:
-            # Не прогнозируем координаты без подтверждённой детекции:
-            # свободный прогноз мог выйти за границы сетки штатного OSD.
+            # На CPU Raspberry соседний инференс может пропустить кадр.
+            # Удерживаем последнюю подтверждённую рамку несколько циклов,
+            # чтобы она не мигала и не стиралась сразу после отправки.
+            if self._last is not None and self._missing < self.max_missing:
+                self._missing += 1
+                return (self._last,)
             self._last = None
             self._velocity = (0.0, 0.0)
             self._missing = 0

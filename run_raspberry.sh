@@ -43,6 +43,26 @@ fi
 
 cd "$PROJECT_DIR"
 
+# Основные параметры распознавания берём из единого runtime-конфига.
+# Файл confidence.conf ниже сохраняет приоритет короткой команды conf XX.
+configured_detection="$($PYTHON_BIN -c 'import json
+try:
+    value = json.load(open("config/runtime_settings.json", encoding="utf-8"))["detection"]
+    print(value.get("confidence_percent", 40), value.get("inference_size", 320), value.get("inference_interval", 1))
+except (KeyError, OSError, TypeError, ValueError):
+    print("40 320 1")
+')"
+read -r configured_confidence configured_size configured_interval <<< "$configured_detection"
+if [[ "$configured_confidence" =~ ^[0-9]+$ && "$configured_confidence" -ge 1 && "$configured_confidence" -le 100 ]]; then
+    CONFIDENCE_PERCENT="$configured_confidence"
+fi
+if [[ "$configured_size" =~ ^[0-9]+$ && "$configured_size" -ge 32 ]]; then
+    INFERENCE_SIZE="$configured_size"
+fi
+if [[ "$configured_interval" =~ ^[0-9]+$ && "$configured_interval" -ge 1 ]]; then
+    INFERENCE_INTERVAL="$configured_interval"
+fi
+
 # Источник видео выбирается в runtime_settings.json.
 configured_camera="$($PYTHON_BIN -c 'import json
 try:
