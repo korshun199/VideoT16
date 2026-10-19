@@ -1,0 +1,13 @@
+[Unit]
+Description=VideoT16 временная полевая Wi-Fi точка доступа
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/nmcli connection up VideoT16-Field
+ExecStop=/usr/bin/nmcli connection down VideoT16-Field
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Создание базового Debian ARM64 и рабочего диска лаборатории.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/config/env.sh"
+
+mkdir -p "$IMAGE_DIR" "$SHARED_DIR"
+
+if [[ ! -f "$BASE_IMAGE" ]]; then
+    echo "Загрузка Debian 12 ARM64..."
+    python3 - "$IMAGE_URL" "$BASE_IMAGE" <<'PY'
+import sys
+import urllib.request
+
+# Загружаем официальный образ без сторонних менеджеров пакетов.
+url, destination = sys.argv[1:]
+urllib.request.urlretrieve(url, destination)
+PY
+fi
+
+if [[ ! -f "$DISK_IMAGE" ]]; then
+    echo "Создание рабочего диска QEMU: $DISK_SIZE"
+    qemu-img create -f qcow2 -F qcow2 -b "$BASE_IMAGE" "$DISK_IMAGE" "$DISK_SIZE"
+fi
+
+if [[ ! -f "$SEED_IMAGE" ]]; then
+    echo "Создание локальной конфигурации NoCloud..."
+    seed_dir="$(mktemp -d)"
+    trap 'rm -rf "$seed_dir"' EXIT
+    public_key="$(cat "$HOME/.ssh/id_ed25519.pub" 2>/dev/null || true)"
+    cat > "$seed_dir/user-data" <<EOF
+#cloud-config
+hostname: videot16-arm64
+manage_etc_hosts: true
+users:
+  - default
+  - name: debian
+    groups: [adm, sudo]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - $public_key
+ssh_pwauth: false
+datasource_list: [ NoCloud, None ]
+EOF
+    cat > "$seed_dir/meta-data" <<EOF
+instance-id: videot16-arm64-001
+local-hostname: videot16-arm64
+EOF
+    genisoimage -quiet -output "$SEED_IMAGE" -volid cidata -joliet -rock "$seed_dir/user-data" "$seed_dir/meta-data"
+    trap - EXIT
+    rm -rf "$seed_dir"
+fi
+
+echo "Лаборатория подготовлена: $DISK_IMAGE"
+qemu-img info "$DISK_IMAGE" | sed -n '1,12p'

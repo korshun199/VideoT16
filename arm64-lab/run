@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Запуск виртуальной ARM64-платы в терминальном режиме.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/config/env.sh"
+
+if [[ ! -f "$DISK_IMAGE" ]]; then
+    echo "Диск не найден. Сначала выполните: $SCRIPT_DIR/build"
+    exit 1
+fi
+
+UEFI=""
+for candidate in \
+    /usr/share/AAVMF/AAVMF_CODE.fd \
+    /usr/share/qemu-efi-aarch64/QEMU_EFI.fd \
+    /usr/share/edk2/aarch64/QEMU_EFI.fd; do
+    if [[ -f "$candidate" ]]; then
+        UEFI="$candidate"
+        break
+    fi
+done
+
+if [[ -z "$UEFI" ]]; then
+    echo "Не найдена UEFI-прошивка AArch64. Установите:"
+    echo "  sudo apt install qemu-efi-aarch64"
+    exit 2
+fi
+
+echo "Запуск ARM64 QEMU без KVM: Debian Bookworm, $RAM, $CPUS CPU"
+exec qemu-system-aarch64 \
+    -machine virt \
+    -cpu cortex-a72 \
+    -smp "$CPUS" \
+    -m "$RAM" \
+    -bios "$UEFI" \
+    -drive "if=none,format=qcow2,id=disk,file=$DISK_IMAGE" \
+    -device virtio-blk-device,drive=disk \
+    -drive "file=$SEED_IMAGE,format=raw,if=virtio,readonly=on" \
+    -nic user,model=virtio,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22 \
+    -nographic \
+    -serial mon:stdio

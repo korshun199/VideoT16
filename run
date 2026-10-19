@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+MODEL_PATH="models/military_vehicle_best.pt"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON_BIN="$PROJECT_DIR/.venv/bin/python3"
+CAMERA_SOURCE="/dev/video"4
+INAV_PORT="/dev/ttyACM0"
+INAV_BAUDRATE="115200"
+CONFIDENCE_PERCENT="60"
+GENERIC_LABEL="1"
+RESOLUTION="1920x1080"
+MONITOR_NAME="DP-1"
+FULLSCREEN="1"
+WINDOW_X=""
+WINDOW_Y=""
+WINDOW_WIDTH="1280"
+WINDOW_HEIGHT="720"
+ALERT_WAV="sounds/fpv_detected.wav"
+ALERT_DELAY="3"
+ALERT_COOLDOWN="3"
+
+# Устройство вычислений: cpu для текущего ноутбука, auto — для совместимых плат.
+DEVICE="cpu"
+
+# Без ограничения кадров. Для короткой проверки можно поставить, например, 300.
+MAX_FRAMES="0"
+
+# ===================== КОНЕЦ НАСТРОЕК =====================
+
+# Проверяет наличие виртуального окружения до запуска тяжёлого процесса.
+if [[ ! -x "$PYTHON_BIN" ]]; then
+    printf 'Ошибка: не найден Python проекта: %s\n' "$PYTHON_BIN" >&2
+    exit 1
+fi
+
+# Собирает параметры запуска в массив без проблем с пробелами в путях.
+RUN_ARGS=(
+    --source "$CAMERA_SOURCE"
+    --model "$MODEL_PATH"
+    --inav-port "$INAV_PORT"
+    --inav-baudrate "$INAV_BAUDRATE"
+    --confidence-percent "$CONFIDENCE_PERCENT"
+    --resolution "$RESOLUTION"
+    --device "$DEVICE"
+    --alert-delay "$ALERT_DELAY"
+    --alert-cooldown "$ALERT_COOLDOWN"
+    --max-frames "$MAX_FRAMES"
+)
+
+# Добавляет необязательный звуковой файл.
+if [[ -n "$ALERT_WAV" ]]; then
+    RUN_ARGS+=(--alert-wav "$ALERT_WAV")
+fi
+
+# Включает единую латинскую подпись OBJECT.
+if [[ "$GENERIC_LABEL" == "1" ]]; then
+    RUN_ARGS+=(--generic-label)
+fi
+
+# Выбирает конкретный монитор через xrandr.
+if [[ -n "$MONITOR_NAME" ]]; then
+    RUN_ARGS+=(--monitor "$MONITOR_NAME")
+fi
+
+# Включает полноэкранный вывод только по явному флагу.
+if [[ "$FULLSCREEN" == "1" ]]; then
+    RUN_ARGS+=(--fullscreen)
+else
+    RUN_ARGS+=(--window-width "$WINDOW_WIDTH" --window-height "$WINDOW_HEIGHT")
+fi
+
+# Координаты окна добавляются только если их задали в настройках.
+if [[ -n "$WINDOW_X" ]]; then
+    RUN_ARGS+=(--window-x "$WINDOW_X")
+fi
+if [[ -n "$WINDOW_Y" ]]; then
+    RUN_ARGS+=(--window-y "$WINDOW_Y")
+fi
+
+# Скрипт намеренно не принимает параметры командной строки.
+# Все значения меняются только в настроечном блоке в начале файла.
+if (( $# > 0 )); then
+    printf 'Параметры командной строки не используются. Измените значения в верхнем блоке файла run.\n' >&2
+    exit 2
+fi
+
+# Переходим в проект, чтобы относительные пути модели и WAV были однозначными.
+cd "$PROJECT_DIR"
+printf 'Запуск VideoT16: модель=%s, камера=%s, порог=%s%%\n' \
+    "$MODEL_PATH" "$CAMERA_SOURCE" "$CONFIDENCE_PERCENT"
+exec "$PYTHON_BIN" -m src.local_object_detection "${RUN_ARGS[@]}"
