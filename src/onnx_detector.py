@@ -1,0 +1,137 @@
+"""Лёгкий инференс YOLO-детектора через ONNX Runtime."""
+
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+import cv2
+import numpy as np
+import onnxruntime as ort
+
+from src.realtime import Detection
+
+
+# Русские подписи классов FPV-модели.
+RUSSIAN_DRONE_LABELS = {
+    "quadcopter": "FPV-DRON",
+    "fixed-wing": "AVIA DRON",
+}
+
+class OnnxDetector:
+    """Запускает экспортированную YOLO-модель без Torch и Ultralytics."""
+
+    def __init__(
+        self,
+        path: Path,
+        confidence: float,
+        generic_label: bool,
+        size: int,
+        object_label: str | None = None,
+        threads: int = 1,
+    ) -> None:
+        self.confidence = confidence
+        self.generic_label = generic_label
+        self.size = size
+        self.object_label = object_label
+        # Сырая лучшая вероятность текущего кадра для диагностического журнала.
+        self.last_best_confidence = 0.0
+        # Ограничиваем параллелизм: поток камеры и SSH должны оставаться отзывчивыми.
+        options = ort.SessionOptions()
+        options.intra_op_num_threads = max(1, threads)
+        options.inter_op_num_threads = 1
+        options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        # В ONNX Runtime 1.29 слияние QuickGelu аварийно завершает процесс
+        # на этой модели. Отключаем небезопасные графические оптимизации:
+        # обычный инференс остаётся рабочим, а модель не изменяется.
+        options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+        self.session = ort.InferenceSession(
+            str(path), options, providers=["CPUExecutionProvider"]
+        )
+        self.input_name = self.session.get_inputs()[0].name
+        metadata = self.session.get_modelmeta().custom_metadata_map
+        try:
+            parsed = ast.literal_eval(metadata.get("names", "{}"))
+            self.names = {int(key): str(value) for key, value in parsed.items()}
+        except (ValueError, SyntaxError):
+            self.names = {}
+
+    def __call__(self, frame: np.ndarray) -> tuple[Detection, ...]:
+        height, width = frame.shape[:2]
+        scale = min(self.size / width, self.size / height)
+        resized = cv2.resize(frame, (round(width * scale), round(height * scale)))
+        canvas = np.full((self.size, self.size, 3), 114, dtype=np.uint8)
+        pad_x = (self.size - resized.shape[1]) // 2
+        pad_y = (self.size - resized.shape[0]) // 2
+        canvas[pad_y:pad_y + resized.shape[0], pad_x:pad_x + resized.shape[1]] = resized
+        blob = canvas[:, :, ::-1].transpose(2, 0, 1)[None].astype(np.float32) / 255.0
+        output = self.session.run(None, {self.input_name: blob})[0][0].T
+        scores = output[:, 4:]
+        class_ids = scores.argmax(axis=1)
+        confidences = scores.max(axis=1)
+        self.last_best_confidence = float(confidences.max()) if confidences.size else 0.0
+        boxes, kept_scores, kept_ids = [], [], []
+        for row, score, class_id in zip(output, confidences, class_ids):
+            if float(score) < self.confidence:
+                continue
+            cx, cy, box_width, box_height = row[:4]
+            x = (cx - box_width / 2 - pad_x) / scale
+            y = (cy - box_height / 2 - pad_y) / scale
+            w = box_width / scale
+            h = box_height / scale
+            x1 = int(max(0, x))
+            y1 = int(max(0, y))
+            x2 = int(min(width, x + w))
+            y2 = int(min(height, y + h))
+            if x2 <= x1 or y2 <= y1:
+                continue
+            boxes.append([x1, y1, x2 - x1, y2 - y1])
+            kept_scores.append(float(score))
+            kept_ids.append(int(class_id))
+        result = []
+        # Не используем cv2.dnn.NMSBoxes: его результат отличается между
+        # версиями OpenCV на ноутбуке и Raspberry Pi. Свой короткий NMS
+        # одинаково обрабатывает кандидатов на обеих машинах.
+        for index in self._nms_indices(boxes, kept_scores, 0.45):
+            x, y, w, h = boxes[index]
+            if self.generic_label:
+                name = "OBJECT"
+            elif self.object_label:
+                name = self.object_label
+            else:
+                # У FPV-модели один класс; при отсутствии имён в ONNX
+                # используем понятную подпись вместо служебного OBJECT.
+                model_name = self.names.get(kept_ids[index], "quadcopter")
+                name = RUSSIAN_DRONE_LABELS.get(model_name, model_name)
+            result.append(Detection(x, y, min(width, x + w), min(height, y + h), name, kept_scores[index]))
+        return tuple(result)
+
+    @staticmethod
+    def _nms_indices(boxes: list[list[int]], scores: list[float], overlap: float) -> list[int]:
+        """Возвращает индексы лучших неперекрывающихся рамок."""
+        if not boxes:
+            return []
+        ordered = sorted(range(len(boxes)), key=lambda index: scores[index], reverse=True)
+        selected: list[int] = []
+        while ordered:
+            current = ordered.pop(0)
+            selected.append(current)
+            remaining: list[int] = []
+            for candidate in ordered:
+                if OnnxDetector._box_iou(boxes[current], boxes[candidate]) <= overlap:
+                    remaining.append(candidate)
+            ordered = remaining
+        return selected
+
+    @staticmethod
+    def _box_iou(first: list[int], second: list[int]) -> float:
+        """Считает IoU двух рамок в формате x, y, width, height."""
+        first_x1, first_y1 = first[0], first[1]
+        first_x2, first_y2 = first[0] + first[2], first[1] + first[3]
+        second_x1, second_y1 = second[0], second[1]
+        second_x2, second_y2 = second[0] + second[2], second[1] + second[3]
+        intersection_width = max(0, min(first_x2, second_x2) - max(first_x1, second_x1))
+        intersection_height = max(0, min(first_y2, second_y2) - max(first_y1, second_y1))
+        intersection = intersection_width * intersection_height
+        union = first[2] * first[3] + second[2] * second[3] - intersection
+        return intersection / union if union else 0.0
