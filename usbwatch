@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+# Показывает параметры каждого USB-устройства сразу после подключения.
+print_device() {
+    local sys_path="/sys${1}"
+    local bus dev speed vendor product manufacturer serial
+    [[ -d "$sys_path" ]] || return 0
+    sleep 1
+    bus="$(cat "$sys_path/busnum" 2>/dev/null || true)"
+    dev="$(cat "$sys_path/devnum" 2>/dev/null || true)"
+    speed="$(cat "$sys_path/speed" 2>/dev/null || true)"
+    vendor="$(cat "$sys_path/idVendor" 2>/dev/null || true)"
+    product="$(cat "$sys_path/idProduct" 2>/dev/null || true)"
+    manufacturer="$(cat "$sys_path/manufacturer" 2>/dev/null || true)"
+    serial="$(cat "$sys_path/serial" 2>/dev/null || true)"
+    [[ -n "$vendor$product" ]] || return 0
+
+    echo
+    echo "========================================"
+    echo "USB-устройство подключено"
+    echo "Путь:        ${1}"
+    echo "Шина/устройство: Bus ${bus:-?} / Dev ${dev:-?}"
+    echo "Скорость:    ${speed:-?} Мбит/с"
+    echo "USB VID:PID: ${vendor:-????}:${product:-????}"
+    echo "Производитель: ${manufacturer:-не указан}"
+    echo "Устройство:   $(cat "$sys_path/product" 2>/dev/null || echo 'не указано')"
+    echo "Серийный номер: ${serial:-не указан}"
+    echo "Параметры lsusb:"
+    if [[ -n "$bus" && -n "$dev" ]]; then
+        lsusb -s "${bus}:${dev}" 2>/dev/null || true
+    fi
+    echo "Текущее дерево USB:"
+    lsusb -t
+    echo "========================================"
+}
+
+echo "USB Watch — вставляй устройства по одному. Ctrl+C — выход."
+echo "Текущие устройства:"
+lsusb -t
+echo
+echo "Ожидание подключений..."
+
+action=""
+devpath=""
+udevadm monitor --udev --property --subsystem-match=usb | while IFS= read -r line; do
+    if [[ -z "$line" ]]; then
+        if [[ "$action" == "add" && -n "$devpath" ]]; then
+            print_device "$devpath"
+        fi
+        action=""
+        devpath=""
+        continue
+    fi
+    case "$line" in
+        ACTION=*) action="${line#ACTION=}" ;;
+        DEVPATH=*) devpath="${line#DEVPATH=}" ;;
+    esac
+done

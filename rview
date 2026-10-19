@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+# Показывает поток Raspberry в отдельном окне без браузера.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RASPBERRY_IP="192.168.20.112"
+LOCAL_PORT="18081"
+TUNNEL_PID=""
+ERROR_LOG="/tmp/videot16-rview-$$.log"
+
+cleanup() {
+    # Завершаем только туннель, запущенный этим скриптом.
+    if [[ -n "$TUNNEL_PID" ]]; then
+        kill "$TUNNEL_PID" 2>/dev/null || true
+        wait "$TUNNEL_PID" 2>/dev/null || true
+    fi
+    rm -f "$ERROR_LOG"
+}
+trap cleanup EXIT INT TERM
+
+for port in {18081..18090}; do
+    LOCAL_PORT="$port"
+    : > "$ERROR_LOG"
+    ssh -o BatchMode=yes -o ConnectTimeout=6 -o ExitOnForwardFailure=yes \
+        -N -L "${LOCAL_PORT}:127.0.0.1:8081" "oleg@${RASPBERRY_IP}" \
+        2>"$ERROR_LOG" &
+    TUNNEL_PID=$!
+    sleep 1
+    if kill -0 "$TUNNEL_PID" 2>/dev/null && ! grep -q "Could not request local forwarding" "$ERROR_LOG"; then
+        break
+    fi
+    kill "$TUNNEL_PID" 2>/dev/null || true
+    wait "$TUNNEL_PID" 2>/dev/null || true
+    TUNNEL_PID=""
+done
+
+if [[ -z "$TUNNEL_PID" ]]; then
+    echo "Не удалось найти свободный локальный порт 18081–18090." >&2
+    exit 1
+fi
+
+echo "VideoT16: окно потока Raspberry, Q или Esc — закрыть"
+exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/rview_window.py" \
+    "http://127.0.0.1:${LOCAL_PORT}/stream.mjpg"

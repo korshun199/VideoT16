@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+# Запускает локальный просмотр VID.mp4 с тем же детектором, что и cam.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VIDEO="${1:-$ROOT/VID.mp4}"
+exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/test_model_video.py" "$VIDEO" \
+    --model "$ROOT/models/anti_uav_fast_320_int8_pc.onnx" \
+    --output /tmp/VideoT16_VID_detected.mp4 \
+    --confidence 0.40 \
+    --size 320 \
+    --threads 3 \
+    --show \
+    --rotate ccw \
+    --every 2 \
+    --speed 4
