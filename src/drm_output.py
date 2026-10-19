@@ -144,7 +144,7 @@ class DrmOutput:
             self.width = self.mode.hdisplay
             self.height = self.mode.vdisplay
             self._create_buffer()
-            self._set_plane()
+            self._set_crtc()
         finally:
             if connector:
                 lib.drmModeFreeConnector(connector)
@@ -190,44 +190,21 @@ class DrmOutput:
         offset = struct.unpack_from("<Q", mapped, 8)[0]
         self._map = mmap.mmap(self._fd, self.size, mmap.MAP_SHARED, mmap.PROT_WRITE | mmap.PROT_READ, offset=offset)
 
-    def _set_plane(self) -> None:
-        """Подменяет изображение активного композитного DRM-plane."""
+    def _set_crtc(self) -> None:
+        """Устанавливает основной HDMI-режим через выбранный CRTC."""
         lib = self._lib
-        lib.drmModeGetPlaneResources.restype = ctypes.POINTER(_PlaneResources)
-        lib.drmModeGetPlane.restype = ctypes.POINTER(_Plane)
-        lib.drmModeFreePlaneResources.argtypes = [ctypes.POINTER(_PlaneResources)]
-        lib.drmModeFreePlane.argtypes = [ctypes.POINTER(_Plane)]
-        lib.drmModeSetPlane.argtypes = [
-            ctypes.c_int, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
-            ctypes.c_int32, ctypes.c_int32, ctypes.c_uint32, ctypes.c_uint32,
-            ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
+        lib.drmModeSetCrtc.argtypes = [
+            ctypes.c_int, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
+            ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32), ctypes.c_int,
+            ctypes.POINTER(_Mode),
         ]
-        resources = lib.drmModeGetPlaneResources(self._fd)
-        if not resources:
-            raise RuntimeError("DRM не вернул список plane")
-        try:
-            plane_id = None
-            for index in range(resources.contents.count_planes):
-                current_id = resources.contents.planes[index]
-                plane = lib.drmModeGetPlane(self._fd, current_id)
-                if plane and plane.contents.possible_crtcs & 1:
-                    plane_id = current_id
-                if plane:
-                    lib.drmModeFreePlane(plane)
-                if plane_id is not None:
-                    break
-            if plane_id is None:
-                raise RuntimeError("Совместимый DRM-plane не найден")
-            result = lib.drmModeSetPlane(
-                self._fd, plane_id, self.crtc_id, self.fb_id.value, 0,
-                0, 0, self.width, self.height,
-                0, 0, self.width << 16, self.height << 16,
-            )
-            if result != 0:
-                raise OSError(result, "drmModeSetPlane завершился ошибкой")
-            self.plane_id = plane_id
-        finally:
-            lib.drmModeFreePlaneResources(resources)
+        connector = ctypes.c_uint32(self.connector_id)
+        result = lib.drmModeSetCrtc(
+            self._fd, self.crtc_id, self.fb_id.value, 0, 0,
+            ctypes.byref(connector), 1, ctypes.byref(self.mode),
+        )
+        if result != 0:
+            raise OSError(result, "drmModeSetCrtc завершился ошибкой")
 
     def write(self, frame) -> None:
         """Масштабирует BGR-кадр и обновляет DRM-буфер."""

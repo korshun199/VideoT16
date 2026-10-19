@@ -121,6 +121,7 @@ class InavMspReader:
         self._arm_ranges: tuple[tuple[int, int, int], ...] = ()
         self._buffer = bytearray()
         self._telemetry_lock = threading.Lock()
+        self._write_lock = threading.Lock()
         self._stop_requested = threading.Event()
         self._worker_error: RuntimeError | None = None
         now = time.monotonic()
@@ -144,7 +145,15 @@ class InavMspReader:
 
     def _request(self, command: int) -> None:
         """Отправляет только запрос чтения MSP-параметра."""
-        self._serial.write(self._request_packet(command))
+        with self._write_lock:
+            self._serial.write(self._request_packet(command))
+
+    def set_crosshairs_position(self, x: int, y: int, visible: bool = True) -> None:
+        # Передаёт координаты и видимость штатного прицела Betaflight.
+        from src.osd import set_crosshairs_position
+
+        with self._write_lock:
+            set_crosshairs_position(self._serial, x, y, visible=visible)
 
     def _parse_frames(self) -> None:
         """Извлекает из буфера полные и проверенные MSP-ответы."""
