@@ -976,7 +976,9 @@ def run(args: argparse.Namespace) -> int:
         names = dict(model.model.names)
         class_count = len(names)
         if class_count == 1:
-            model.model.names = {0: "КВАДРОКОПТЕР"}
+            # Встроенный шрифт OpenCV не поддерживает кириллицу.
+            # Латинская подпись одинаково читается в окне и на OSD.
+            model.model.names = {0: "FPV-DRON"}
         elif class_count == len(RUSSIAN_LABELS):
             model.model.names = dict(enumerate(RUSSIAN_LABELS))
         else:
