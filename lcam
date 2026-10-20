@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+# Запускает распознавание с параметрами из config/runtime_settings.json.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+mapfile -t SETTINGS < <(
+    "$ROOT/.venv/bin/python3" - "$ROOT" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root))
+from config.runtime_settings import load_settings
+
+desktop = load_settings(root / "config/runtime_settings.json")["desktop"]
+for key in (
+    "camera_device", "model_path", "confidence_percent", "inference_size",
+    "inference_interval", "capture_width", "capture_height", "camera_fps", "clean_window",
+):
+    print(desktop[key])
+PY
+)
+
+if [[ "${#SETTINGS[@]}" -ne 9 ]]; then
+    echo "Ошибка: не удалось прочитать раздел desktop из config/runtime_settings.json" >&2
+    exit 1
+fi
+
+export VIDEOT16_CAMERA="${SETTINGS[0]}"
+export VIDEOT16_MODEL="$ROOT/${SETTINGS[1]}"
+export VIDEOT16_CONFIDENCE_PERCENT="${SETTINGS[2]}"
+export VIDEOT16_INFERENCE_SIZE="${SETTINGS[3]}"
+export VIDEOT16_INFERENCE_INTERVAL="${SETTINGS[4]}"
+export VIDEOT16_CAPTURE_WIDTH="${SETTINGS[5]}"
+export VIDEOT16_CAPTURE_HEIGHT="${SETTINGS[6]}"
+export VIDEOT16_CAMERA_FPS="${SETTINGS[7]}"
+export VIDEOT16_CLEAN_WINDOW="${SETTINGS[8]}"
+
+echo "VideoT16: камера=${VIDEOT16_CAMERA}, захват=${SETTINGS[5]}x${SETTINGS[6]}@${SETTINGS[7]}, модель=${SETTINGS[1]}, порог=${SETTINGS[2]}%, размер=${SETTINGS[3]}"
+exec "$ROOT/cam" "$@"

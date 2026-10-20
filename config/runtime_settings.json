@@ -8,6 +8,17 @@
     "inference_interval": 1,
     "generic_label": false
   },
+  "desktop": {
+    "camera_device": "/dev/video0",
+    "model_path": "models/fpv_drone_best.onnx",
+    "confidence_percent": 30,
+    "inference_size": 640,
+    "inference_interval": 1,
+    "capture_width": 1280,
+    "capture_height": 720,
+    "camera_fps": 60,
+    "clean_window": true
+  },
   "video_output": {
     "j7_enabled": false,
     "j7_overlay_enabled": false,

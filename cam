@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+# Запускает локальный просмотр камеры с распознаванием.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CAMERA="${VIDEOT16_CAMERA:-}"
+if [[ -z "$CAMERA" ]]; then
+    for candidate in /dev/v4l/by-id/*video-index0; do
+        if [[ -e "$candidate" ]]; then
+            CAMERA="$(readlink -f "$candidate")"
+            break
+        fi
+    done
+fi
+CAMERA="${CAMERA:-/dev/video0}"
+MODEL="${VIDEOT16_MODEL:-$ROOT/models/fpv_drone_best.onnx}"
+CONFIDENCE_PERCENT="${VIDEOT16_CONFIDENCE_PERCENT:-40}"
+INFERENCE_SIZE="${VIDEOT16_INFERENCE_SIZE:-640}"
+INFERENCE_INTERVAL="${VIDEOT16_INFERENCE_INTERVAL:-1}"
+CAPTURE_WIDTH="${VIDEOT16_CAPTURE_WIDTH:-0}"
+CAPTURE_HEIGHT="${VIDEOT16_CAPTURE_HEIGHT:-0}"
+CAMERA_FPS="${VIDEOT16_CAMERA_FPS:-25}"
+
+ARGS=(
+    --source "$CAMERA"
+    --model "$MODEL"
+    --confidence-percent "$CONFIDENCE_PERCENT"
+    --inference-size "$INFERENCE_SIZE"
+    --inference-interval "$INFERENCE_INTERVAL"
+    --capture-width "$CAPTURE_WIDTH"
+    --capture-height "$CAPTURE_HEIGHT"
+    --camera-fps "$CAMERA_FPS"
+)
+if [[ "${VIDEOT16_CLEAN_WINDOW:-true}" == "true" ]]; then
+    ARGS+=(--clean-window)
+fi
+
+exec "$ROOT/.venv/bin/python3" -m src.local_object_detection "${ARGS[@]}"

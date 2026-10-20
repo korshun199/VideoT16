@@ -136,6 +136,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Желаемая частота камеры; 0 — оставить значение камеры",
     )
     parser.add_argument(
+        "--capture-width",
+        type=int,
+        default=0,
+        help="Ширина кадра USB-камеры; 0 — оставить значение устройства",
+    )
+    parser.add_argument(
+        "--capture-height",
+        type=int,
+        default=0,
+        help="Высота кадра USB-камеры; 0 — оставить значение устройства",
+    )
+    parser.add_argument(
         "--cpu-threads",
         type=int,
         default=0,
@@ -311,8 +323,11 @@ def open_capture(source: int | str, camera_settings: dict | None = None):
     return cv2.VideoCapture(source)
 
 
-def configure_low_latency_capture(capture, camera_fps: float = 0, camera_settings: dict | None = None) -> None:
-    """Настраивает V4L2 на минимальную очередь и MJPEG без принуждения разрешения."""
+def configure_low_latency_capture(
+    capture, camera_fps: float = 0, camera_settings: dict | None = None,
+    capture_width: int = 0, capture_height: int = 0,
+) -> None:
+    """Настраивает V4L2 на свежий MJPEG-кадр, размер и заданную частоту."""
     import cv2
 
     if isinstance(capture, PicameraCapture):
@@ -321,6 +336,10 @@ def configure_low_latency_capture(capture, camera_fps: float = 0, camera_setting
     # Не копим старые кадры: приоритет имеет актуальность, а не полнота очереди.
     capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    if capture_width > 0:
+        capture.set(cv2.CAP_PROP_FRAME_WIDTH, capture_width)
+    if capture_height > 0:
+        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, capture_height)
     if camera_fps > 0:
         capture.set(cv2.CAP_PROP_FPS, camera_fps)
     # Значения веб-панели имеют диапазоны CSI/Picamera2 (0..1), а EasyCap
@@ -443,17 +462,11 @@ def draw_tech_hud(
     muted = (145, 165, 170)
     dark = (8, 18, 24)
 
-    # Полупрозрачные панели не перекрывают основное видео.
-    cv2.rectangle(overlay, (18, 16), (360, 82), dark, -1)
-    cv2.rectangle(overlay, (width - 300, 16), (width - 18, 82), dark, -1)
+    # Оставляем только нижнюю приборную панель: верх кадра свободен для видео.
     cv2.rectangle(overlay, (18, height - 58), (width - 18, height - 16), dark, -1)
     cv2.addWeighted(overlay, 0.78, frame, 0.22, 0, frame)
 
     font = cv2.FONT_HERSHEY_SIMPLEX
-    cv2.putText(frame, "VIDEOT16 // VISION CORE", (32, 43), font, 0.62, cyan, 1, cv2.LINE_AA)
-    cv2.putText(frame, "LIVE / USB CAMERA", (32, 67), font, 0.42, green, 1, cv2.LINE_AA)
-    cv2.putText(frame, "TRACKING", (width - 274, 43), font, 0.55, green if detections else muted, 1, cv2.LINE_AA)
-    cv2.putText(frame, f"TARGETS  {len(detections):02d}", (width - 274, 67), font, 0.42, muted, 1, cv2.LINE_AA)
 
     # Небольшие угловые маркеры создают вид приборного экрана.
     corner = 28
@@ -909,6 +922,10 @@ def run(args: argparse.Namespace) -> int:
         raise ValueError("--inference-interval должен быть не меньше 1")
     if args.cpu_threads < 0:
         raise ValueError("--cpu-threads не может быть отрицательным")
+    if args.capture_width < 0 or args.capture_height < 0:
+        raise ValueError("--capture-width и --capture-height не могут быть отрицательными")
+    if bool(args.capture_width) != bool(args.capture_height):
+        raise ValueError("--capture-width и --capture-height задаются парой")
     if args.alert_cooldown < 0:
         raise ValueError("--alert-cooldown не может быть отрицательным")
     if args.battery_capacity_mah < 0:
@@ -973,7 +990,7 @@ def run(args: argparse.Namespace) -> int:
     capture = open_capture(resolve_source(parse_source(args.source)), camera_settings)
     if not capture.isOpened():
         raise RuntimeError(f"Не удалось открыть источник камеры: {args.source}")
-    configure_low_latency_capture(capture, args.camera_fps, camera_settings)
+    configure_low_latency_capture(capture, args.camera_fps, camera_settings, args.capture_width, args.capture_height)
     print(
         f"Камера: {int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
         f"{int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))}, "
@@ -1057,6 +1074,11 @@ def run(args: argparse.Namespace) -> int:
         if args.resolution and not args.monitor:
             args.window_width, args.window_height = args.resolution
         cv2.resizeWindow(WINDOW_NAME, args.window_width, args.window_height)
+        # До прихода первого кадра OpenCV показывает белую подложку окна.
+        # Сразу заменяем её чёрным холстом того же размера.
+        import numpy as np
+        cv2.imshow(WINDOW_NAME, np.zeros((args.window_height, args.window_width, 3), dtype=np.uint8))
+        cv2.waitKey(1)
         if args.window_x is not None or args.window_y is not None:
             cv2.moveWindow(
                 WINDOW_NAME,

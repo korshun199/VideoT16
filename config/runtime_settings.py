@@ -21,6 +21,19 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "inference_interval": 1,
         "generic_label": False,
     },
+    # Настройки локального запуска ./lcam на рабочем ноутбуке.
+    # Они отделены от блока detection, который используется Raspberry Pi.
+    "desktop": {
+        "camera_device": "/dev/video0",
+        "model_path": "models/fpv_drone_best.onnx",
+        "confidence_percent": 40,
+        "inference_size": 640,
+        "inference_interval": 1,
+        "capture_width": 1280,
+        "capture_height": 720,
+        "camera_fps": 25,
+        "clean_window": True,
+    },
     "camera": {
         "v4l2_controls_enabled": False,
         "brightness": 0.0,
@@ -156,6 +169,24 @@ def save_settings(settings: dict[str, Any], path: Path = SETTINGS_PATH) -> dict[
         raise ValueError("inference_size должен быть от 32 до 1280")
     if not 1 <= int(detection["inference_interval"]) <= 30:
         raise ValueError("inference_interval должен быть от 1 до 30")
+    desktop = normalized["desktop"]
+    if not isinstance(desktop["camera_device"], str) or not desktop["camera_device"]:
+        raise ValueError("desktop.camera_device должен быть непустой строкой")
+    if not isinstance(desktop["model_path"], str) or not desktop["model_path"]:
+        raise ValueError("desktop.model_path должен быть непустой строкой")
+    if not 1 <= float(desktop["confidence_percent"]) <= 100:
+        raise ValueError("desktop.confidence_percent должен быть от 1 до 100")
+    if not 32 <= int(desktop["inference_size"]) <= 1280:
+        raise ValueError("desktop.inference_size должен быть от 32 до 1280")
+    if not 1 <= int(desktop["inference_interval"]) <= 30:
+        raise ValueError("desktop.inference_interval должен быть от 1 до 30")
+    for key in ("capture_width", "capture_height"):
+        if not 32 <= int(desktop[key]) <= 7680:
+            raise ValueError(f"desktop.{key} должен быть от 32 до 7680")
+    if not 1 <= float(desktop["camera_fps"]) <= 120:
+        raise ValueError("desktop.camera_fps должен быть от 1 до 120")
+    if not isinstance(desktop["clean_window"], bool):
+        raise ValueError("desktop.clean_window должен быть true или false")
     if not 1 <= float(normalized["video_output"]["preview_fps"]) <= 25:
         raise ValueError("video_output.preview_fps должен быть от 1 до 25")
     if not 0.2 <= float(normalized["video_output"]["displayport_osd_fps"]) <= 10:
