@@ -39,6 +39,12 @@ assert RUNTIME_SPEC is not None and RUNTIME_SPEC.loader is not None
 RUNTIME = importlib.util.module_from_spec(RUNTIME_SPEC)
 RUNTIME_SPEC.loader.exec_module(RUNTIME)
 
+INSTALL_PATH = ROOT / "win16" / "install.py"
+INSTALL_SPEC = importlib.util.spec_from_file_location("windows_install", INSTALL_PATH)
+assert INSTALL_SPEC is not None and INSTALL_SPEC.loader is not None
+INSTALLER = importlib.util.module_from_spec(INSTALL_SPEC)
+INSTALL_SPEC.loader.exec_module(INSTALLER)
+
 
 class WindowsBootstrapTests(unittest.TestCase):
     """Проверяет паспорт, выпуск и защиту от повторной загрузки payload."""
@@ -89,9 +95,18 @@ class WindowsBootstrapTests(unittest.TestCase):
 
     def test_install_and_run_use_separate_logs(self):
         """Обычный запуск сохраняет ошибки в run.log, а установка — в install.log."""
-        root = Path("C:/VideoT16")
+        root = Path("D:/Мои программы/VideoT16")
         self.assertEqual(BOOTSTRAP.journal_path(root, True), root / "install.log")
         self.assertEqual(BOOTSTRAP.journal_path(root, False), root / "run.log")
+
+    def test_scripts_use_their_own_user_folder(self):
+        """init/install/start не должны переносить файлы в заранее заданный диск."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(INSTALLER, "__file__", str(root / "install.py")):
+                self.assertEqual(INSTALLER.install_root(), root)
+            with mock.patch.object(BOOTSTRAP, "__file__", str(root / "start.py")):
+                self.assertEqual(BOOTSTRAP.install_root(), root)
 
     def test_runtime_output_is_configured_for_run_log_capture(self):
         """Запуск Video16 направляет stdout и stderr в журнал родительского процесса."""
@@ -131,6 +146,26 @@ class WindowsBootstrapTests(unittest.TestCase):
             self.assertIn("runtime.py", names)
             self.assertIn("models/fpv_drone_best.onnx", names)
             self.assertIn("src/local_object_detection.py", names)
+            self.assertIn("launcher_ui.py", names)
+
+    def test_selection_requires_known_model_camera_and_confidence(self):
+        """Окно не должно передавать в runtime произвольную модель или камеру."""
+        ui_path = ROOT / "win16" / "launcher_ui.py"
+        ui_spec = importlib.util.spec_from_file_location("windows_launcher_ui", ui_path)
+        assert ui_spec is not None and ui_spec.loader is not None
+        ui = importlib.util.module_from_spec(ui_spec)
+        ui_spec.loader.exec_module(ui)
+        self.assertEqual(
+            ui.validate_selection("model.onnx", 2, 55, ["model.onnx"], [2]),
+            {
+                "format": "Video16 Windows settings v1",
+                "model": "model.onnx",
+                "camera_index": 2,
+                "confidence_percent": 55,
+            },
+        )
+        with self.assertRaises(ui.LauncherError):
+            ui.validate_selection("other.onnx", 2, 55, ["model.onnx"], [2])
 
     def test_personal_activation_decrypts_common_payload(self):
         """Один payload открывается только с активацией для совпавшего паспорта."""

@@ -15,6 +15,7 @@ import hmac
 import io
 import json
 import os
+import platform
 import zipfile
 from pathlib import Path
 
@@ -27,11 +28,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def owner_key_path() -> Path:
-    """Возвращает личное хранилище ключа владельца вне Git-репозитория."""
+    """Возвращает закрытое хранилище ключа владельца вне Git-репозитория."""
     configured = os.environ.get("VIDEO16_OWNER_KEY_PATH")
     if configured:
         return Path(configured).expanduser().resolve()
-    return Path.home() / ".local" / "share" / "VideoT16" / "owner_windows_payload_key.bin"
+    legacy = Path.home() / ".local" / "share" / "VideoT16" / "owner_windows_payload_key.bin"
+    if legacy.is_file():
+        return legacy
+    if platform.system() == "Windows" and os.environ.get("LOCALAPPDATA"):
+        return Path(os.environ["LOCALAPPDATA"]) / "VideoT16" / "owner_windows_payload_key.bin"
+    return legacy
 
 
 def device_key(document: dict[str, object]) -> str:
@@ -92,15 +98,25 @@ def make_archive(output: io.BytesIO) -> None:
         "src/mcm_font.py", "src/preview.py",
         "config/__init__.py", "config/osd_config.py",
         "config/runtime_settings.py", "config/runtime_settings.json",
-        "models/fpv_drone_best.onnx",
+        "win16/launcher_ui.py",
     ]
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
         for relative in files:
             source = PROJECT_ROOT / relative
             if not source.is_file():
                 raise FileNotFoundError(source)
-            name = "runtime.py" if relative == "win16/runtime.py" else relative
+            names = {
+                "win16/runtime.py": "runtime.py",
+                "win16/launcher_ui.py": "launcher_ui.py",
+            }
+            name = names.get(relative, relative)
             archive.write(source, name)
+        models_dir = PROJECT_ROOT / "models"
+        models = sorted(path for path in models_dir.glob("*.onnx") if path.is_file())
+        if not models:
+            raise FileNotFoundError(f"Не найдены ONNX-модели в {models_dir}")
+        for model in models:
+            archive.write(model, Path("models") / model.name)
 
 
 def make_archive_with_runtime_patch(base_payload: Path, base_release: str, output: io.BytesIO) -> None:
@@ -118,9 +134,10 @@ def make_archive_with_runtime_patch(base_payload: Path, base_release: str, outpu
         if "runtime.py" not in source.namelist():
             raise ValueError("в исходном payload отсутствует runtime.py")
         for info in source.infolist():
-            if info.filename != "runtime.py":
+            if info.filename not in {"runtime.py", "launcher_ui.py"}:
                 archive.writestr(info, source.read(info.filename))
         archive.write(PROJECT_ROOT / "win16" / "runtime.py", "runtime.py")
+        archive.write(PROJECT_ROOT / "win16" / "launcher_ui.py", "launcher_ui.py")
 
 
 def build_release(

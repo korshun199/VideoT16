@@ -14,35 +14,34 @@ payload зашифрован ключом, выведенным из UUID и с�
 
 ## Что делает пользователь
 
-1. Скачивает из GitHub **только два файла**: `init.py` и `install.py`.
-2. Запускает `init.py`. Рядом с ним появляется `init.dat`; пользователь
+1. Создаёт папку программы в любом удобном месте и кладёт в неё из GitHub
+   **только два файла**: `init.py` и `install.py`. Имя и путь папки могут
+   быть любыми.
+2. Запускает `init.py` из этой папки. Рядом появляется `init.dat`; пользователь
    передаёт этот файл владельцу и может затем удалить его.
 3. Владелец отправляет обратно `activation.dat`.
-4. Пользователь запускает `install.py`. Он создаёт `C:\VideoT16`, пишет ход
-   работы в `C:\VideoT16\install.log`, сам скачивает `start.py`,
-   `release.json` и `Video16.payload` из GitHub, проверяет payload и ставит
+4. Пользователь кладёт `activation.dat` в ту же папку и запускает `install.py`.
+   Установщик записывает `install.log` рядом со скриптом, скачивает туда
+   `start.py`, `release.json` и `Video16.payload`, проверяет payload и ставит
    зависимости. Повторно корректный payload и зависимости не скачиваются.
-5. Пользователь кладёт `activation.dat` в `C:\VideoT16`.
-6. Обычный запуск — `C:\VideoT16\start.py`.
+5. Обычный запуск — `start.py` из этой же папки.
 
 `start.py` не читает файл `init.dat`: он заново получает UUID, серийный номер
 BIOS и признак TPM, сверяет их с отпечатком в `activation.dat`, временно
 расшифровывает payload и после завершения удаляет временный каталог.
-Обычный запуск, включая ошибки камеры, записывается отдельно в
-`C:\VideoT16\run.log`.
+Обычный запуск, включая ошибки камеры, записывается отдельно в `run.log`
+рядом с программой.
 
 Повторный запуск не скачивает корректный payload повторно: проверяются размер и
 SHA-256 из `release.json`. Зависимости также пропускаются, пока не изменился
 Python, набор требований или не исчез один из нужных модулей.
 
-## Что делает владелец на Linux
+## Что делает владелец на Windows
 
 Сначала создать общий выпуск. Эта команда не использует `init.dat`:
 
-```bash
-python3 win16/build.py \
-  --release 2026.10.19 \
-  --payload-url https://github.com/korshun199/VideoT16/raw/refs/heads/win16/win16/Video16.payload
+```powershell
+py win16/build.py --release 2026.10.19 --payload-url https://github.com/korshun199/VideoT16/raw/refs/heads/win16/win16/Video16.payload
 ```
 
 В `win16/releases/2026.10.19/` появятся `Video16.payload` и `release.json`.
@@ -51,13 +50,12 @@ python3 win16/build.py \
 
 Затем `init.dat` не добавляется в Git. Создать персональную активацию:
 
-```bash
-python3 win16/build.py /путь/к/init.dat \
-  --activation /безопасный/каталог/activation.dat
+```powershell
+py win16/build.py C:\путь\к\init.dat --activation C:\безопасный-каталог\activation.dat
 ```
 
 Закрытый ключ по умолчанию хранится вне репозитория в
-`~/.local/share/VideoT16/owner_windows_payload_key.bin` и никогда не передаётся
+`%LOCALAPPDATA%\VideoT16\owner_windows_payload_key.bin` и никогда не передаётся
 и не публикуется. При необходимости путь задаётся переменной
 `VIDEO16_OWNER_KEY_PATH`; это должен быть зашифрованный офлайн-архив владельца.
 Новый payload, зашифрованный тем же ключом, не требует перевыдачи

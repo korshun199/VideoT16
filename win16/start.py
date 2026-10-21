@@ -97,9 +97,8 @@ class Journal:
 
 
 def install_root() -> Path:
-    """Возвращает единый каталог работы Video16 на системном диске Windows."""
-    drive = os.environ.get("SystemDrive", "C:").rstrip("\\/")
-    return Path(drive + "\\") / "VideoT16"
+    """Возвращает пользовательскую папку, в которой находится start.py."""
+    return Path(__file__).resolve().parent
 
 
 def journal_path(root: Path, install_only: bool) -> Path:
@@ -350,6 +349,7 @@ def run_application(root: Path, payload_path: Path, manifest: dict[str, Any], jo
         journal.line("Устройство подтверждено, запускаю Video16", "OK")
         environment = os.environ.copy()
         environment["PYTHONIOENCODING"] = "utf-8:backslashreplace"
+        environment["VIDEO16_INSTALL_ROOT"] = str(root)
         process = subprocess.Popen(
             [sys.executable, str(runtime)],
             cwd=temporary_root,
@@ -395,7 +395,7 @@ def main() -> int:
         ensure_dependencies(root, journal)
         payload_path, manifest = fetch_payload(root, args.manifest, journal)
         if args.install_only:
-            journal.line("Установка готова. Поместите activation.dat в C:\\VideoT16 и запустите start.py", "OK")
+            journal.line(f"Установка готова. Поместите activation.dat в {root} и запустите start.py", "OK")
             return 0
         return run_application(root, payload_path, manifest, journal)
     except InstallError as error:

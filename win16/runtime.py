@@ -5,14 +5,16 @@ from __future__ import annotations
 
 import sys
 import time
+import os
 from pathlib import Path
 
 
-def choose_camera_source() -> str:
-    """Выбирает USB-capture 1, а при отказе открывает встроенную камеру 0."""
+def available_cameras() -> list[int]:
+    """Возвращает доступные индексы камер Windows, проверенные через DirectShow."""
     import cv2
 
-    for index in (1, 0):
+    result: list[int] = []
+    for index in range(5):
         capture = cv2.VideoCapture(index, cv2.CAP_DSHOW)
         try:
             if not capture.isOpened():
@@ -20,11 +22,18 @@ def choose_camera_source() -> str:
             time.sleep(0.3)
             ok, frame = capture.read()
             if ok and frame is not None:
-                print(f"Camera source: {index}")
-                return str(index)
+                result.append(index)
         finally:
             capture.release()
-    raise RuntimeError("Не удалось открыть ни USB-capture (1), ни встроенную камеру (0)")
+    return result
+
+
+def choose_camera_source(index: int) -> str:
+    """Проверяет выбранную пользователем Windows-камеру перед распознаванием."""
+    if index not in available_cameras():
+        raise RuntimeError(f"Не удалось открыть выбранную камеру Windows: {index}")
+    print(f"Camera source: {index}")
+    return str(index)
 
 
 def make_windows_open_capture(original_open_capture, cv2_module):
@@ -38,23 +47,30 @@ def make_windows_open_capture(original_open_capture, cv2_module):
 
 
 def main() -> int:
-    """Запускает локальное распознавание с камеры Windows."""
+    """Показывает параметры Windows и запускает распознавание с выбранной моделью."""
     import cv2
 
     root = Path(__file__).resolve().parent
     sys.path.insert(0, str(root))
+    import launcher_ui
     import src.local_object_detection as detection
 
-    source = choose_camera_source()
+    configured_root = os.environ.get("VIDEO16_INSTALL_ROOT")
+    if not configured_root:
+        raise RuntimeError("Не найдена пользовательская папка установки Video16")
+    install_root = Path(configured_root).resolve()
+    models = launcher_ui.available_models(root / "models")
+    selection = launcher_ui.choose_options(install_root, models, available_cameras())
+    model_path = root / "models" / str(selection["model"])
+    source = choose_camera_source(int(selection["camera_index"]))
     detection.open_capture = make_windows_open_capture(detection.open_capture, cv2)
     sys.argv = [
         "videot16-windows",
         "--source", source,
-        "--model", str(root / "models" / "fpv_drone_best.onnx"),
-        "--confidence-percent", "40",
+        "--model", str(model_path),
+        "--confidence-percent", str(selection["confidence_percent"]),
         "--inference-size", "640",
         "--inference-interval", "1",
-        "--clean-window",
     ]
     return detection.main()
 

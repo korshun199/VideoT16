@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Устанавливает Video16 из каталога win16 GitHub в C:\\VideoT16.
+"""Устанавливает Video16 в папку, выбранную пользователем.
 
 Пользователь скачивает этот файл вручную. Скрипт получает ``start.py`` из
 ветки выпуска, запускает его в режиме установки и пишет весь ход в
-``C:\\VideoT16\\install.log``. Уже подтверждённые payload и зависимости
+``install.log`` рядом со скриптом. Уже подтверждённые payload и зависимости
 повторно не скачиваются и не устанавливаются.
 """
 
@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import os
 import platform
 import subprocess
 import sys
@@ -58,9 +57,8 @@ class Journal:
 
 
 def install_root() -> Path:
-    """Возвращает единый каталог Video16 на системном диске Windows."""
-    drive = os.environ.get("SystemDrive", "C:").rstrip("\\/")
-    return Path(drive + "\\") / "VideoT16"
+    """Возвращает созданную пользователем папку, где лежит install.py."""
+    return Path(__file__).resolve().parent
 
 
 def sync_start(url: str, destination: Path, journal: Journal) -> None:
@@ -126,7 +124,7 @@ def main() -> int:
         if process.returncode != 0:
             raise InstallError(f"подготовка Video16 завершилась с кодом {process.returncode}")
         journal.line("Установка завершена", "OK")
-        journal.line("Поместите activation.dat в C:\\VideoT16 и запустите start.py", "NEXT")
+        journal.line(f"Поместите activation.dat в {root} и запустите start.py", "NEXT")
         return 0
     except InstallError as error:
         journal.line(str(error), "ERROR")
