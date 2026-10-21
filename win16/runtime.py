@@ -59,9 +59,11 @@ def main() -> int:
     if not configured_root:
         raise RuntimeError("Не найдена пользовательская папка установки Video16")
     install_root = Path(configured_root).resolve()
-    models = launcher_ui.available_models(root / "models")
+    models_dir = install_root / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+    models = launcher_ui.available_models(models_dir)
     selection = launcher_ui.choose_options(install_root, models, available_cameras())
-    model_path = root / "models" / str(selection["model"])
+    model_path = models_dir / str(selection["model"])
     source = choose_camera_source(int(selection["camera_index"]))
     detection.open_capture = make_windows_open_capture(detection.open_capture, cv2)
     sys.argv = [

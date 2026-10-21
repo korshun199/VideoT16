@@ -13,7 +13,7 @@ class LauncherError(RuntimeError):
 
 
 def available_models(models_dir: Path) -> list[str]:
-    """Возвращает имена ONNX-моделей, уже включённых в расшифрованный payload."""
+    """Возвращает имена ONNX-моделей из каталога пользователя рядом с программой."""
     return sorted(path.name for path in models_dir.glob("*.onnx") if path.is_file())
 
 
@@ -63,7 +63,10 @@ def choose_options(
 ) -> dict[str, Any]:
     """Показывает окно выбора и возвращает сохранённые пользователем параметры."""
     if not models:
-        raise LauncherError("В payload нет ONNX-моделей для выбора")
+        raise LauncherError(
+            f"В каталоге {install_root / 'models'} нет ONNX-моделей. "
+            "Поместите туда подготовленную модель с расширением .onnx и запустите снова."
+        )
     if not cameras:
         raise LauncherError("Windows не обнаружила доступную камеру")
 

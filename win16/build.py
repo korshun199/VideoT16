@@ -89,15 +89,15 @@ def content_key() -> bytes:
     return key
 
 
-def make_archive(output: io.BytesIO, models_dir: Path | None = None) -> None:
-    """Укладывает runtime, его исходники, настройки и модель в общий payload."""
+def make_archive(output: io.BytesIO) -> None:
+    """Укладывает в payload только исполняемое ядро, без моделей и файлов настроек."""
     files = [
         "win16/runtime.py",
         "src/__init__.py", "src/local_object_detection.py", "src/realtime.py",
         "src/tracker.py", "src/onnx_detector.py", "src/osd.py",
         "src/mcm_font.py", "src/preview.py",
         "config/__init__.py", "config/osd_config.py",
-        "config/runtime_settings.py", "config/runtime_settings.json",
+        "config/runtime_settings.py",
         "win16/launcher_ui.py",
     ]
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -111,41 +111,9 @@ def make_archive(output: io.BytesIO, models_dir: Path | None = None) -> None:
             }
             name = names.get(relative, relative)
             archive.write(source, name)
-        models_dir = models_dir or PROJECT_ROOT / "models"
-        models = sorted(path for path in models_dir.glob("*.onnx") if path.is_file())
-        if not models:
-            raise FileNotFoundError(f"Не найдены ONNX-модели в {models_dir}")
-        for model in models:
-            archive.write(model, Path("models") / model.name)
-
-
-def make_archive_with_runtime_patch(base_payload: Path, base_release: str, output: io.BytesIO) -> None:
-    """Берёт проверенный payload и заменяет только Windows-оболочку runtime.py."""
-    payload = base_payload.read_bytes()
-    if not payload.startswith(PAYLOAD_MAGIC):
-        raise ValueError(f"неверный формат исходного payload: {base_payload}")
-    encrypted = payload[len(PAYLOAD_MAGIC):]
-    plaintext = AESGCM(content_key()).decrypt(
-        encrypted[:12], encrypted[12:], base_release.encode("utf-8")
-    )
-    with zipfile.ZipFile(io.BytesIO(plaintext)) as source, zipfile.ZipFile(
-        output, "w", zipfile.ZIP_DEFLATED
-    ) as archive:
-        if "runtime.py" not in source.namelist():
-            raise ValueError("в исходном payload отсутствует runtime.py")
-        for info in source.infolist():
-            if info.filename not in {"runtime.py", "launcher_ui.py"}:
-                archive.writestr(info, source.read(info.filename))
-        archive.write(PROJECT_ROOT / "win16" / "runtime.py", "runtime.py")
-        archive.write(PROJECT_ROOT / "win16" / "launcher_ui.py", "launcher_ui.py")
-
-
 def build_release(
     release: str,
     payload_url: str,
-    base_payload: Path | None = None,
-    base_release: str | None = None,
-    models_dir: Path | None = None,
 ) -> tuple[Path, dict[str, object]]:
     """Создаёт неизменяемый выпуск payload и публичный release.json."""
     release_dir = PROJECT_ROOT / "win16" / "releases" / release
@@ -154,12 +122,7 @@ def build_release(
     if payload_path.exists() or manifest_path.exists():
         raise FileExistsError(f"выпуск {release!r} уже существует; используйте новое имя выпуска")
     archive = io.BytesIO()
-    if base_payload is None:
-        make_archive(archive, models_dir)
-    else:
-        if not base_release:
-            raise ValueError("для исправления существующего payload укажите --from-release")
-        make_archive_with_runtime_patch(base_payload, base_release, archive)
+    make_archive(archive)
     nonce = os.urandom(12)
     encrypted = AESGCM(content_key()).encrypt(nonce, archive.getvalue(), release.encode("utf-8"))
     release_dir.mkdir(parents=True, exist_ok=False)
@@ -197,18 +160,13 @@ def main() -> int:
     parser.add_argument("init_dat", type=Path, nargs="?", help="init.dat целевого Windows-компьютера")
     parser.add_argument("--release", help="новое имя выпуска, например 2026.10.19")
     parser.add_argument("--payload-url", help="публичный URL Video16.payload")
-    parser.add_argument("--from-payload", type=Path, help="проверенный payload, в котором заменить только runtime.py")
-    parser.add_argument("--from-release", help="release_id исходного payload для --from-payload")
-    parser.add_argument("--models-dir", type=Path, help="каталог исходных ONNX-моделей вне Git")
     parser.add_argument("--activation", type=Path, help="куда записать личный activation.dat")
     args = parser.parse_args()
 
     if args.release or args.payload_url:
         if not args.release or not args.payload_url:
             raise ValueError("для нового выпуска нужны одновременно --release и --payload-url")
-        release_dir, manifest = build_release(
-            args.release, args.payload_url, args.from_payload, args.from_release, args.models_dir
-        )
+        release_dir, manifest = build_release(args.release, args.payload_url)
         print(f"[OK] выпуск payload: {release_dir / 'Video16.payload'}")
         print(f"[OK] release.json: {release_dir / 'release.json'}")
         print(f"[OK] SHA-256: {manifest['payload_sha256']}")

@@ -185,27 +185,72 @@ class WindowsBootstrapTests(unittest.TestCase):
         self.assertEqual(calls, [(1, "directshow")])
         self.assertEqual(opened("rtsp://camera"), ("rtsp://camera", None))
 
-    def test_runtime_patch_keeps_existing_payload_content(self):
-        """Исправление Windows-камеры меняет runtime, не подменяя модель и исходники."""
+    def test_new_payload_contains_core_only(self):
+        """Новый payload содержит исходники ядра, но не модели и файлы настроек."""
         archive_data = io.BytesIO()
-        manifest = json.loads((ROOT / "win16" / "release.json").read_text(encoding="utf-8"))
-        BUILDER.make_archive_with_runtime_patch(
-            ROOT / "win16" / "Video16.payload", str(manifest["release_id"]), archive_data
-        )
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            for relative in (
+                "win16/runtime.py",
+                "win16/launcher_ui.py",
+                "src/__init__.py",
+                "src/local_object_detection.py",
+                "src/realtime.py",
+                "src/tracker.py",
+                "src/onnx_detector.py",
+                "src/osd.py",
+                "src/mcm_font.py",
+                "src/preview.py",
+                "config/__init__.py",
+                "config/osd_config.py",
+                "config/runtime_settings.py",
+                "config/runtime_settings.json",
+                "models/user-model.onnx",
+            ):
+                target = project / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"test")
+            with mock.patch.object(BUILDER, "PROJECT_ROOT", project):
+                BUILDER.make_archive(archive_data)
+
         with zipfile.ZipFile(archive_data) as archive:
             names = set(archive.namelist())
-            self.assertIn("runtime.py", names)
-            self.assertIn("models/fpv_drone_best.onnx", names)
-            self.assertIn("src/local_object_detection.py", names)
-            self.assertIn("launcher_ui.py", names)
+        self.assertIn("runtime.py", names)
+        self.assertIn("src/local_object_detection.py", names)
+        self.assertIn("launcher_ui.py", names)
+        self.assertIn("config/runtime_settings.py", names)
+        self.assertNotIn("models/user-model.onnx", names)
+        self.assertNotIn("config/runtime_settings.json", names)
+        self.assertFalse(any(name.endswith(".json") for name in names))
 
-    def test_selection_requires_known_model_camera_and_confidence(self):
-        """Окно не должно передавать в runtime произвольную модель или камеру."""
+    def test_launcher_discovers_models_in_user_program_folder(self):
+        """Меню перечисляет модели из постоянного каталога пользователя."""
+        ui = self.load_launcher_ui()
+        with tempfile.TemporaryDirectory() as directory:
+            models = Path(directory) / "models"
+            models.mkdir()
+            (models / "custom.onnx").write_bytes(b"model")
+            self.assertEqual(ui.available_models(models), ["custom.onnx"])
+
+    def test_launcher_explains_empty_user_models_folder(self):
+        """При пустом каталоге моделей меню подсказывает пользователю, что сделать."""
+        ui = self.load_launcher_ui()
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ui.LauncherError, r"models.*\.onnx"):
+                ui.choose_options(Path(directory), [], [0])
+
+    def load_launcher_ui(self):
+        """Загружает модуль меню без запуска графического интерфейса."""
         ui_path = ROOT / "win16" / "launcher_ui.py"
         ui_spec = importlib.util.spec_from_file_location("windows_launcher_ui", ui_path)
         assert ui_spec is not None and ui_spec.loader is not None
         ui = importlib.util.module_from_spec(ui_spec)
         ui_spec.loader.exec_module(ui)
+        return ui
+
+    def test_selection_requires_known_model_camera_and_confidence(self):
+        """Окно не должно передавать в runtime произвольную модель или камеру."""
+        ui = self.load_launcher_ui()
         self.assertEqual(
             ui.validate_selection("model.onnx", 2, 55, ["model.onnx"], [2]),
             {
