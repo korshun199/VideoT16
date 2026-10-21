@@ -2,9 +2,9 @@
 
 ## Назначение
 
-У всех пользователей один зашифрованный `Video16.payload`. Он вместе с
-`release.json`, `init.py`, `install.py` и `start.py` лежит в каталоге
-`win16` ветки `win16` GitHub-репозитория. Payload не содержит открытого ключа.
+У всех пользователей один зашифрованный `Video16.payload`, размещённый как
+файл общего GitHub Release. Скрипты и `release.json` лежат в каталоге `win16`
+ветки `win16` GitHub-репозитория. Payload не содержит открытого ключа.
 Каждый компьютер получает только свой `activation.dat`: в нём общий ключ
 payload зашифрован ключом, выведенным из UUID и серийного номера BIOS этого ПК.
 
@@ -44,12 +44,13 @@ Python и глобальные пакеты не изменяются.
 Сначала создать общий выпуск. Эта команда не использует `init.dat`:
 
 ```powershell
-py win16/build.py --release 2026.10.19 --payload-url https://github.com/korshun199/VideoT16/raw/refs/heads/win16/win16/Video16.payload
+py win16/build.py --release 2026.10.21.1 --models-dir C:\путь\к\VideoT16\models --payload-url https://github.com/korshun199/VideoT16/releases/download/2026.10.21.1/Video16.payload
 ```
 
-В `win16/releases/2026.10.19/` появятся `Video16.payload` и `release.json`.
-После независимой проверки их размещают в корне `win16/` и добавляют в Git.
-Это единственный общий файл программы; у всех пользователей он одинаковый.
+В `win16/releases/2026.10.21.1/` появятся `Video16.payload` и `release.json`.
+После независимой проверки общий payload загружают как asset GitHub Release,
+а `release.json` публикуют в `win16/`. Все пользователи скачивают один и тот
+же payload; ONNX-модели остаются исходными и не добавляются в Git.
 
 Затем `init.dat` не добавляется в Git. Создать персональную активацию:
 

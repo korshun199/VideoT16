@@ -99,6 +99,23 @@ class WindowsBootstrapTests(unittest.TestCase):
         self.assertEqual(BOOTSTRAP.journal_path(root, True), root / "install.log")
         self.assertEqual(BOOTSTRAP.journal_path(root, False), root / "run.log")
 
+    def test_windows_owner_key_uses_dedicated_local_appdata_path(self):
+        """Новый Windows-ключ хранится отдельно от прежнего Linux-пути."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            legacy = root / "profile" / ".local" / "share" / "VideoT16"
+            legacy.mkdir(parents=True)
+            (legacy / "owner_windows_payload_key.bin").write_bytes(b"legacy")
+            with (
+                mock.patch.dict(os.environ, {"LOCALAPPDATA": str(root / "local-appdata")}, clear=True),
+                mock.patch.object(BUILDER.platform, "system", return_value="Windows"),
+                mock.patch.object(BUILDER.Path, "home", return_value=root / "profile"),
+            ):
+                self.assertEqual(
+                    BUILDER.owner_key_path(),
+                    root / "local-appdata" / "VideoT16" / "owner_windows_payload_key.bin",
+                )
+
     def test_scripts_use_their_own_user_folder(self):
         """init/install/start не должны переносить файлы в заранее заданный диск."""
         with tempfile.TemporaryDirectory() as directory:

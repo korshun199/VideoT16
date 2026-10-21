@@ -32,11 +32,11 @@ def owner_key_path() -> Path:
     configured = os.environ.get("VIDEO16_OWNER_KEY_PATH")
     if configured:
         return Path(configured).expanduser().resolve()
+    if platform.system() == "Windows" and os.environ.get("LOCALAPPDATA"):
+        return Path(os.environ["LOCALAPPDATA"]) / "VideoT16" / "owner_windows_payload_key.bin"
     legacy = Path.home() / ".local" / "share" / "VideoT16" / "owner_windows_payload_key.bin"
     if legacy.is_file():
         return legacy
-    if platform.system() == "Windows" and os.environ.get("LOCALAPPDATA"):
-        return Path(os.environ["LOCALAPPDATA"]) / "VideoT16" / "owner_windows_payload_key.bin"
     return legacy
 
 
@@ -89,7 +89,7 @@ def content_key() -> bytes:
     return key
 
 
-def make_archive(output: io.BytesIO) -> None:
+def make_archive(output: io.BytesIO, models_dir: Path | None = None) -> None:
     """Укладывает runtime, его исходники, настройки и модель в общий payload."""
     files = [
         "win16/runtime.py",
@@ -111,7 +111,7 @@ def make_archive(output: io.BytesIO) -> None:
             }
             name = names.get(relative, relative)
             archive.write(source, name)
-        models_dir = PROJECT_ROOT / "models"
+        models_dir = models_dir or PROJECT_ROOT / "models"
         models = sorted(path for path in models_dir.glob("*.onnx") if path.is_file())
         if not models:
             raise FileNotFoundError(f"Не найдены ONNX-модели в {models_dir}")
@@ -145,6 +145,7 @@ def build_release(
     payload_url: str,
     base_payload: Path | None = None,
     base_release: str | None = None,
+    models_dir: Path | None = None,
 ) -> tuple[Path, dict[str, object]]:
     """Создаёт неизменяемый выпуск payload и публичный release.json."""
     release_dir = PROJECT_ROOT / "win16" / "releases" / release
@@ -154,7 +155,7 @@ def build_release(
         raise FileExistsError(f"выпуск {release!r} уже существует; используйте новое имя выпуска")
     archive = io.BytesIO()
     if base_payload is None:
-        make_archive(archive)
+        make_archive(archive, models_dir)
     else:
         if not base_release:
             raise ValueError("для исправления существующего payload укажите --from-release")
@@ -198,6 +199,7 @@ def main() -> int:
     parser.add_argument("--payload-url", help="публичный URL Video16.payload")
     parser.add_argument("--from-payload", type=Path, help="проверенный payload, в котором заменить только runtime.py")
     parser.add_argument("--from-release", help="release_id исходного payload для --from-payload")
+    parser.add_argument("--models-dir", type=Path, help="каталог исходных ONNX-моделей вне Git")
     parser.add_argument("--activation", type=Path, help="куда записать личный activation.dat")
     args = parser.parse_args()
 
@@ -205,7 +207,7 @@ def main() -> int:
         if not args.release or not args.payload_url:
             raise ValueError("для нового выпуска нужны одновременно --release и --payload-url")
         release_dir, manifest = build_release(
-            args.release, args.payload_url, args.from_payload, args.from_release
+            args.release, args.payload_url, args.from_payload, args.from_release, args.models_dir
         )
         print(f"[OK] выпуск payload: {release_dir / 'Video16.payload'}")
         print(f"[OK] release.json: {release_dir / 'release.json'}")
