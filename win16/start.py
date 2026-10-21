@@ -14,7 +14,6 @@ import base64
 import datetime as dt
 import hashlib
 import hmac
-import importlib.util
 import io
 import json
 import os
@@ -42,6 +41,7 @@ REQUIREMENTS = (
     "onnxruntime>=1.20,<2",
 )
 REQUIRED_MODULES = ("cryptography", "numpy", "cv2", "onnxruntime")
+LOCAL_PYTHON = Path(".venv") / "Scripts" / "python.exe"
 
 
 class InstallError(RuntimeError):
@@ -52,7 +52,7 @@ def configure_console() -> None:
     """Не даёт локальной кодировке консоли Windows оборвать запуск программы."""
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(errors="backslashreplace")
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
         except (AttributeError, OSError):
             pass
 
@@ -77,7 +77,7 @@ class Journal:
         print(text, flush=True)
         self._file.write(text + "\n")
 
-    def command(self, args: list[str]) -> int:
+    def command(self, args: list[str], env: dict[str, str] | None = None) -> int:
         """Запускает команду и сохраняет весь её вывод в журнал."""
         self.line("Команда: " + " ".join(args))
         process = subprocess.Popen(
@@ -87,6 +87,7 @@ class Journal:
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=env,
         )
         assert process.stdout is not None
         for text in process.stdout:
@@ -264,31 +265,76 @@ def fetch_payload(root: Path, manifest_url: str, journal: Journal) -> tuple[Path
 
 
 def dependencies_ready(root: Path) -> bool:
-    """Проверяет маркер текущего Python и наличие всех импортируемых модулей."""
+    """Проверяет локальное виртуальное окружение и его обязательные модули."""
     marker = root / "dependencies.json"
-    if not marker.is_file() or any(importlib.util.find_spec(name) is None for name in REQUIRED_MODULES):
+    python = root / LOCAL_PYTHON
+    if not marker.is_file() or not python.is_file():
         return False
     try:
         data = json.loads(marker.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    return data == {"python": sys.version, "requirements": list(REQUIREMENTS)}
+    if data != {"python": sys.version, "requirements": list(REQUIREMENTS)}:
+        return False
+    imports = ";".join(f"import {name}" for name in REQUIRED_MODULES)
+    result = subprocess.run(
+        [str(python), "-c", imports],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return result.returncode == 0
+
+
+def local_python(root: Path) -> Path:
+    """Возвращает Python виртуального окружения внутри папки программы."""
+    return root / LOCAL_PYTHON
+
+
+def local_command_environment(root: Path) -> dict[str, str]:
+    """Направляет временные файлы и кэш pip в папку программы."""
+    temporary = root / ".tmp"
+    cache = root / ".pip-cache"
+    temporary.mkdir(parents=True, exist_ok=True)
+    cache.mkdir(parents=True, exist_ok=True)
+    environment = os.environ.copy()
+    environment.update({
+        "TMP": str(temporary),
+        "TEMP": str(temporary),
+        "TMPDIR": str(temporary),
+        "PIP_CACHE_DIR": str(cache),
+        "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+    })
+    return environment
 
 
 def ensure_dependencies(root: Path, journal: Journal) -> None:
-    """Устанавливает зависимости только при первом запуске или смене Python/набора."""
+    """Создаёт локальное окружение и ставит зависимости только внутрь папки программы."""
     if dependencies_ready(root):
         journal.line("Зависимости уже проверены, повторная установка не нужна", "SKIP")
         return
-    journal.line("Устанавливаю зависимости Python; это может занять несколько минут")
-    command = [sys.executable, "-m", "pip", "install", "--upgrade", *REQUIREMENTS]
-    if journal.command(command) != 0:
+    environment = local_command_environment(root)
+    python = local_python(root)
+    if not python.is_file():
+        journal.line("Создаю локальное окружение Python в папке программы")
+        if journal.command([sys.executable, "-m", "venv", str(root / ".venv")], environment) != 0:
+            raise InstallError("не удалось создать локальное окружение Python")
+    journal.line("Устанавливаю зависимости в локальное окружение; это может занять несколько минут")
+    command = [str(python), "-m", "pip", "install", "--upgrade", *REQUIREMENTS]
+    if journal.command(command, environment) != 0:
         raise InstallError("pip не смог установить зависимости; подробности в install.log")
-    if any(importlib.util.find_spec(name) is None for name in REQUIRED_MODULES):
+    imports = ";".join(f"import {name}" for name in REQUIRED_MODULES)
+    result = subprocess.run([str(python), "-c", imports], capture_output=True)
+    if result.returncode != 0:
         raise InstallError("после pip не найдены обязательные модули")
     marker = {"python": sys.version, "requirements": list(REQUIREMENTS)}
     (root / "dependencies.json").write_text(json.dumps(marker, indent=2) + "\n", encoding="utf-8")
     journal.line("Зависимости установлены и проверены", "OK")
+
+
+def runtime_temp_root(root: Path) -> Path:
+    """Создаёт каталог расшифрованного runtime внутри папки программы."""
+    return Path(tempfile.mkdtemp(prefix=".runtime-", dir=root))
 
 
 def safe_extract(archive_data: bytes, destination: Path) -> None:
@@ -340,7 +386,7 @@ def run_application(root: Path, payload_path: Path, manifest: dict[str, Any], jo
     """Подтверждает ПК, временно распаковывает runtime и запускает Video16."""
     identity = device_key(read_identity())
     plaintext = decrypt_payload(root, payload_path, manifest, identity)
-    temporary_root = Path(tempfile.mkdtemp(prefix="video16-windows-"))
+    temporary_root = runtime_temp_root(root)
     try:
         safe_extract(plaintext, temporary_root)
         runtime = temporary_root / "runtime.py"
@@ -350,8 +396,9 @@ def run_application(root: Path, payload_path: Path, manifest: dict[str, Any], jo
         environment = os.environ.copy()
         environment["PYTHONIOENCODING"] = "utf-8:backslashreplace"
         environment["VIDEO16_INSTALL_ROOT"] = str(root)
+        environment.update(local_command_environment(root))
         process = subprocess.Popen(
-            [sys.executable, str(runtime)],
+            [str(local_python(root)), str(runtime)],
             cwd=temporary_root,
             env=environment,
             stdout=subprocess.PIPE,
@@ -393,6 +440,11 @@ def main() -> int:
         journal.line(f"Python: {sys.version.split()[0]}")
         root.mkdir(parents=True, exist_ok=True)
         ensure_dependencies(root, journal)
+        python = local_python(root)
+        if Path(sys.executable).resolve() != python.resolve():
+            journal.line("Передаю запуск локальному Python из папки программы", "OK")
+            command = [str(python), str(Path(__file__).resolve()), *sys.argv[1:]]
+            return journal.command(command, local_command_environment(root))
         payload_path, manifest = fetch_payload(root, args.manifest, journal)
         if args.install_only:
             journal.line(f"Установка готова. Поместите activation.dat в {root} и запустите start.py", "OK")

@@ -108,6 +108,40 @@ class WindowsBootstrapTests(unittest.TestCase):
             with mock.patch.object(BOOTSTRAP, "__file__", str(root / "start.py")):
                 self.assertEqual(BOOTSTRAP.install_root(), root)
 
+    def test_runtime_dependencies_and_temporary_files_stay_in_user_folder(self):
+        """Окружение Python, кэш и расшифрованный runtime создаются рядом с программой."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.assertEqual(
+                BOOTSTRAP.local_python(root),
+                root / ".venv" / "Scripts" / "python.exe",
+            )
+            environment = BOOTSTRAP.local_command_environment(root)
+            for key in ("TEMP", "TMP", "TMPDIR", "PIP_CACHE_DIR"):
+                self.assertEqual(Path(environment[key]).parent, root)
+            temporary = BOOTSTRAP.runtime_temp_root(root)
+            self.assertEqual(temporary.parent, root)
+            temporary.rmdir()
+
+    def test_dependencies_install_into_local_venv(self):
+        """pip запускается из локального .venv, не из системного Python."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            python = BOOTSTRAP.local_python(root)
+            python.parent.mkdir(parents=True)
+            python.touch()
+            journal = mock.Mock()
+            journal.command.return_value = 0
+            with (
+                mock.patch.object(BOOTSTRAP, "dependencies_ready", return_value=False),
+                mock.patch.object(BOOTSTRAP.subprocess, "run", return_value=mock.Mock(returncode=0)),
+            ):
+                BOOTSTRAP.ensure_dependencies(root, journal)
+            args, environment = journal.command.call_args.args
+            self.assertEqual(args[:3], [str(python), "-m", "pip"])
+            self.assertEqual(Path(environment["PIP_CACHE_DIR"]).parent, root)
+            self.assertTrue((root / "dependencies.json").is_file())
+
     def test_runtime_output_is_configured_for_run_log_capture(self):
         """Запуск Video16 направляет stdout и stderr в журнал родительского процесса."""
         source = START_PATH.read_text(encoding="utf-8")

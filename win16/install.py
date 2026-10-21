@@ -31,7 +31,7 @@ def configure_console() -> None:
     """Не даёт локальной кодировке консоли Windows оборвать установку."""
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(errors="backslashreplace")
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
         except (AttributeError, OSError):
             pass
 
