@@ -2,8 +2,20 @@
 
 set -Eeuo pipefail
 
-# Запускает распознавание с параметрами из config/runtime_settings.json.
+# Запускает проверенный небесный профиль; обычный режим доступен через --production.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "${1:-}" != "--production" ]]; then
+    if [[ "$#" -ne 0 ]]; then
+        echo "Запуск испытания: ./lcam"
+        echo "Обычная система: ./lcam --production [параметры]"
+        exit 2
+    fi
+    echo "VideoT16: запуск живого испытания профиля sky"
+    exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/live_drone_trial.py" --profile sky
+fi
+shift
+
+# Запускает обычное распознавание с параметрами из config/runtime_settings.json.
 mapfile -t SETTINGS < <(
     "$ROOT/.venv/bin/python3" - "$ROOT" <<'PY'
 from pathlib import Path

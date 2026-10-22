@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "profiles": {
+    "sky": {
+      "description": "Проверенный владельцем живой захват дрона на фоне неба",
+      "settings": {
+        "source": "auto",
+        "model": "models/anti_uav_fast_320_int8_pc.onnx",
+        "confidence": 0.4,
+        "min_confidence": 0.05,
+        "tile_size": 640,
+        "tile_overlap": 0.2,
+        "threads": 2,
+        "full_frame": false
+      },
+      "evidence": {
+        "local_log": "test_samples/video_trials/logs/live_drone_trial_20261022_094926_667364.log",
+        "observed_at": "2026-10-22T09:49:26+03:00",
+        "camera_observed": {
+          "device": "/dev/video4",
+          "resolution": "640x480",
+          "reported_fps": 30
+        },
+        "processed_frames": 478,
+        "frames_with_box_at_threshold": 333,
+        "box_threshold_percent": 40,
+        "mean_inference_ms": 91.0,
+        "median_inference_ms": 86.0,
+        "confidence_median_percent": 74,
+        "confidence_max_percent": 87,
+        "owner_visual_confirmation": true
+      }
+    }
+  }
+}
