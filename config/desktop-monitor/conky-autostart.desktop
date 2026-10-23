@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Системный монитор Conky
+Comment=Показывает ресурсы компьютера на рабочем столе
+Exec=/usr/bin/conky -c /home/oleg/.config/conky/conky.conf
+Terminal=false
+X-GNOME-Autostart-enabled=true

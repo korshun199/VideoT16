@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=VideoT16 — распознавание
+Comment=Запустить живое распознавание VideoT16 по профилю «небо»
+Exec=/home/work/VideoT16/lcam
+Path=/home/work/VideoT16
+Icon=camera-web-symbolic
+Terminal=true
+StartupNotify=true
+Categories=AudioVideo;Video;

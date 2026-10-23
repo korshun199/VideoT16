@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=VideoT16 — настройки
+Comment=Открыть нативное окно настроек VideoT16
+Exec=/home/work/VideoT16/.venv/bin/python /home/work/VideoT16/config/editor.py
+Path=/home/work/VideoT16
+Icon=applications-system
+Terminal=false
+StartupNotify=true
+Categories=Utility;
