@@ -41,6 +41,11 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent
 CONFIG_DIR = PROJECT_DIR / "config"
 MAX_CONFIG_BYTES = 1_048_576
 
+# Подключаем единый источник программных значений по умолчанию.
+if str(PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR))
+from config.runtime_settings import DEFAULT_SETTINGS
+
 # Подписи параметров, которые могут встретиться в JSON проекта.
 FIELD_LABELS = {
     "model": "Модель распознавания",
@@ -388,6 +393,23 @@ def set_config_value(data: dict[str, Any], path: tuple[str, ...], value: Any) ->
     target[path[-1]] = value
 
 
+def apply_defaults(data: dict[str, Any], defaults: dict[str, Any] = DEFAULT_SETTINGS) -> dict[str, Any]:
+    """Возвращает настройки с программными значениями по умолчанию, сохраняя дополнительные поля."""
+    restored = copy.deepcopy(data)
+
+    def restore(target: dict[str, Any], source: dict[str, Any]) -> None:
+        """Рекурсивно восстанавливает известные значения и не удаляет расширения конфигурации."""
+        for key, default_value in source.items():
+            current_value = target.get(key)
+            if isinstance(default_value, dict) and isinstance(current_value, dict):
+                restore(current_value, default_value)
+            else:
+                target[key] = copy.deepcopy(default_value)
+
+    restore(restored, defaults)
+    return restored
+
+
 class ConfigEditorWindow(QMainWindow):
     """Главное нативное окно выбора, изменения и сохранения конфигураций."""
 
@@ -450,6 +472,8 @@ class ConfigEditorWindow(QMainWindow):
         self.launch_button = QPushButton("Запуск распознавания")
         self.launch_button.setObjectName("launchButton")
         self.launch_button.clicked.connect(self._launch_recognition)
+        self.defaults_button = QPushButton("По умолчанию")
+        self.defaults_button.clicked.connect(self._apply_defaults)
         self.save_button = QPushButton("Сохранить настройки")
         self.save_button.setObjectName("saveButton")
         self.save_button.setEnabled(False)
@@ -458,6 +482,7 @@ class ConfigEditorWindow(QMainWindow):
         close_button.clicked.connect(self.close)
         button_row.addWidget(self.launch_button)
         button_row.addStretch(1)
+        button_row.addWidget(self.defaults_button)
         button_row.addWidget(self.save_button)
         button_row.addWidget(close_button)
         outer.addLayout(button_row)
@@ -481,7 +506,11 @@ class ConfigEditorWindow(QMainWindow):
             self.statusBar().showMessage("В каталоге config/ нет JSON-файлов")
             self._show_empty_message("В каталоге config/ не найдено файлов настроек.")
             return
-        self._load_config(names[0])
+        initial_name = "runtime_settings.json" if "runtime_settings.json" in names else names[0]
+        blocker = QSignalBlocker(self.file_combo)
+        self.file_combo.setCurrentText(initial_name)
+        del blocker
+        self._load_config(initial_name)
 
     def _show_empty_message(self, message: str) -> None:
         """Показывает объяснение, если конфигурации отсутствуют или не читаются."""
@@ -536,6 +565,12 @@ class ConfigEditorWindow(QMainWindow):
         self.options = build_options(self.project_dir, data)
         self._render_config()
         self.statusBar().showMessage(f"Загружено: {name}")
+        self.defaults_button.setEnabled(name == "runtime_settings.json")
+        self.defaults_button.setToolTip(
+            "Восстановить программные значения по умолчанию. Файл изменится только после сохранения."
+            if name == "runtime_settings.json"
+            else "Для этого файла отдельные значения по умолчанию не определены."
+        )
         self.save_button.setEnabled(False)
 
     def _render_config(self) -> None:
@@ -728,6 +763,49 @@ class ConfigEditorWindow(QMainWindow):
     def _is_dirty(self) -> bool:
         """Проверяет, отличается ли открытый объект настроек от исходного."""
         return self.current_data is not None and self.original_data is not None and self.current_data != self.original_data
+
+    def _apply_defaults(self) -> None:
+        """Подставляет программные значения по умолчанию, не записывая файл автоматически."""
+        if self.current_name != "runtime_settings.json" or self.current_data is None:
+            return
+        if self._is_dirty() and not self._confirm_discard("установить настройки по умолчанию"):
+            return
+        current_outputs = self.current_data.get("video_output", {})
+        default_outputs = DEFAULT_SETTINGS.get("video_output", {})
+        if not isinstance(current_outputs, dict):
+            current_outputs = {}
+        if not isinstance(default_outputs, dict):
+            default_outputs = {}
+        output_labels = {
+            "j7_enabled": "аналоговый выход J7",
+            "j7_overlay_enabled": "наложение на J7",
+            "flight_controller_osd_enabled": "OSD полётного контроллера",
+        }
+        newly_enabled_outputs = [
+            label
+            for key, label in output_labels.items()
+            if default_outputs.get(key) is True and current_outputs.get(key) is not True
+        ]
+        if newly_enabled_outputs:
+            outputs_text = ", ".join(newly_enabled_outputs)
+            answer = QMessageBox.warning(
+                self,
+                "Проверка видеовыходов",
+                f"Значения по умолчанию включают: {outputs_text}. "
+                "Это не включит выходы прямо сейчас, но параметры сохранятся и будут "
+                "использованы при следующем запуске. Подставить значения?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self.current_data = apply_defaults(self.current_data)
+        self.options = build_options(self.project_dir, self.current_data)
+        self._render_config()
+        self.save_button.setEnabled(self._is_dirty())
+        self.statusBar().showMessage(
+            "Значения по умолчанию подставлены. Нажми «Сохранить настройки», чтобы записать их в файл."
+        )
 
     def _confirm_discard(self, action: str) -> bool:
         """Спрашивает мышиное подтверждение перед отменой несохранённых изменений."""

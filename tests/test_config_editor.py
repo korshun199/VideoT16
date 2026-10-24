@@ -12,7 +12,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QGroupBox, QLabel, QMessageBox, QSlider
 
-from config.editor import ConfigEditorWindow, StaleConfigError, build_options, list_config_files, read_config, save_config
+from config.editor import ConfigEditorWindow, StaleConfigError, apply_defaults, build_options, list_config_files, read_config, save_config
+from config.runtime_settings import DEFAULT_SETTINGS
 
 
 class ConfigEditorTests(unittest.TestCase):
@@ -195,6 +196,95 @@ class ConfigEditorTests(unittest.TestCase):
 
         self.assertFalse(self.window._is_dirty())
         self.assertEqual(self.window.current_data["detection"]["confidence"], 0.3333)
+
+    def test_default_button_uses_program_defaults_and_waits_for_save(self) -> None:
+        """Кнопка подставляет программные значения, но не записывает файл до сохранения."""
+        initial_data = copy.deepcopy(DEFAULT_SETTINGS)
+        initial_data["desktop"]["confidence_percent"] = 30
+        initial_data["desktop"]["camera_fps"] = 60
+        initial_data["custom_extension"] = {"preserve": True}
+        initial_content = json.dumps(initial_data, ensure_ascii=False, indent=2) + "\n"
+        runtime_path = self.config_dir / "runtime_settings.json"
+        runtime_path.write_text(initial_content, encoding="utf-8")
+
+        self.window = ConfigEditorWindow(self.project_dir, self.config_dir)
+        self.application.processEvents()
+        self.assertEqual(self.window.file_combo.currentText(), "runtime_settings.json")
+        self.assertTrue(self.window.defaults_button.isEnabled())
+
+        self.window.defaults_button.click()
+        self.application.processEvents()
+
+        self.assertEqual(self.window.current_data["desktop"]["confidence_percent"], 50)
+        self.assertEqual(self.window.current_data["desktop"]["camera_fps"], 55)
+        self.assertEqual(self.window.current_data["custom_extension"], {"preserve": True})
+        self.assertTrue(self.window.save_button.isEnabled())
+        self.assertEqual(runtime_path.read_text(encoding="utf-8"), initial_content)
+
+        self.window.save_button.click()
+        self.application.processEvents()
+        saved = json.loads(runtime_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["desktop"]["confidence_percent"], 50)
+        self.assertEqual(saved["desktop"]["camera_fps"], 55)
+        self.assertEqual(saved["custom_extension"], {"preserve": True})
+
+    def test_runtime_settings_opens_first_and_profiles_have_no_default_button(self) -> None:
+        """При наличии главной конфигурации сразу открывает её, а для профилей отключает сброс."""
+        (self.config_dir / "runtime_settings.json").write_text(
+            json.dumps(DEFAULT_SETTINGS, ensure_ascii=False), encoding="utf-8"
+        )
+        (self.config_dir / "live_drone_profiles.json").write_text(
+            json.dumps({"version": 1, "profiles": {}}, ensure_ascii=False), encoding="utf-8"
+        )
+        self.window = ConfigEditorWindow(self.project_dir, self.config_dir)
+        self.application.processEvents()
+
+        self.assertEqual(self.window.file_combo.currentText(), "runtime_settings.json")
+        self.assertTrue(self.window.defaults_button.isEnabled())
+        self.window.file_combo.setCurrentText("live_drone_profiles.json")
+        self.application.processEvents()
+        self.assertFalse(self.window.defaults_button.isEnabled())
+
+    def test_default_button_warns_before_enabling_video_outputs(self) -> None:
+        """Предупреждает об изменении выключенных видеовыходов и уважает отказ владельца."""
+        initial_data = copy.deepcopy(DEFAULT_SETTINGS)
+        initial_data["video_output"]["j7_enabled"] = False
+        initial_data["video_output"]["j7_overlay_enabled"] = False
+        initial_data["video_output"]["flight_controller_osd_enabled"] = False
+        runtime_path = self.config_dir / "runtime_settings.json"
+        runtime_path.write_text(json.dumps(initial_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.window = ConfigEditorWindow(self.project_dir, self.config_dir)
+        self.application.processEvents()
+
+        with patch("config.editor.QMessageBox.warning", return_value=QMessageBox.StandardButton.Cancel) as warn:
+            self.window.defaults_button.click()
+
+        warn.assert_called_once()
+        self.assertFalse(self.window._is_dirty())
+        self.assertEqual(self.window.current_data["video_output"]["j7_enabled"], False)
+        self.assertEqual(runtime_path.read_text(encoding="utf-8"), json.dumps(initial_data, ensure_ascii=False, indent=2))
+
+        with patch("config.editor.QMessageBox.warning", return_value=QMessageBox.StandardButton.Yes):
+            self.window.defaults_button.click()
+
+        self.assertEqual(self.window.current_data["video_output"]["j7_enabled"], True)
+        self.assertEqual(self.window.current_data["video_output"]["j7_overlay_enabled"], True)
+        self.assertEqual(self.window.current_data["video_output"]["flight_controller_osd_enabled"], True)
+        self.assertTrue(self.window.save_button.isEnabled())
+
+    def test_apply_defaults_preserves_unknown_fields_and_does_not_mutate_source(self) -> None:
+        """Возвращает копию с дефолтами, не меняя исходные данные и неизвестные параметры."""
+        source = {"desktop": {"confidence_percent": 30}, "extra": "оставить"}
+        defaults = {"desktop": {"confidence_percent": 50, "camera_fps": 55}, "new_section": {"enabled": True}}
+
+        restored = apply_defaults(source, defaults)
+
+        self.assertEqual(restored, {
+            "desktop": {"confidence_percent": 50, "camera_fps": 55},
+            "extra": "оставить",
+            "new_section": {"enabled": True},
+        })
+        self.assertEqual(source, {"desktop": {"confidence_percent": 30}, "extra": "оставить"})
 
     def test_close_saves_unsaved_mouse_changes_and_closes_without_modal_dialog(self) -> None:
         """Крестик закрывает окно и сохраняет внесённые мышью изменения без лишнего окна."""
