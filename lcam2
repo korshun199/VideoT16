@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Открывает Qt-окно настроек перед запуском VideoT16.
+set -Eeuo pipefail
+
+PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON="${PROJECT_DIR}/.venv/bin/python"
+EDITOR="${PROJECT_DIR}/config/editor.py"
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    printf 'Использование: ./lcam2\n'
+    printf 'Открывает окно настроек; запуск распознавания — кнопкой «Запуск распознавания».\n'
+    exit 0
+fi
+
+if (( $# != 0 )); then
+    printf 'Ошибка: lcam2 не принимает параметры. Для справки: ./lcam2 --help\n' >&2
+    exit 2
+fi
+
+if [[ ! -x "${PYTHON}" ]]; then
+    printf 'Ошибка: не найден Python окружения: %s\n' "${PYTHON}" >&2
+    exit 127
+fi
+
+if [[ ! -f "${EDITOR}" ]]; then
+    printf 'Ошибка: не найден редактор настроек: %s\n' "${EDITOR}" >&2
+    exit 2
+fi
+
+exec "${PYTHON}" "${EDITOR}"
