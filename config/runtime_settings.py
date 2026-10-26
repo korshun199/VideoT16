@@ -26,12 +26,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "desktop": {
         "camera_device": "/dev/video0",
         "model_path": "models/fpv_drone_best.onnx",
-        "confidence_percent": 40,
+        "confidence_percent": 50,
         "inference_size": 640,
         "inference_interval": 1,
         "capture_width": 1280,
         "capture_height": 720,
-        "camera_fps": 25,
+        "camera_fps": 55,
         "clean_window": True,
     },
     "camera": {
@@ -55,7 +55,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "object": {
         "font": "FONT_HERSHEY_SIMPLEX",
-        "font_scale": 1.4,
+        "font_scale": 1,
         "text_thickness": 2,
         "box_thickness": 2,
         "color_rgb": [0, 255, 0],

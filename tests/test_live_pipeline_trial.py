@@ -47,7 +47,7 @@ class LivePipelineTrialTests(unittest.TestCase):
         self.assertEqual(profile.pipeline["max_match_distance_fraction"], 0.25)
         self.assertEqual(profile.capture["pixel_format"], "YUYV")
         self.assertTrue(profile.display["fullscreen"])
-        self.assertFalse(profile.fast_scan["enabled"])
+        self.assertTrue(profile.fast_scan["enabled"])
         self.assertEqual(profile.fast_scan["focus_crop_width"], 640)
         self.assertEqual(profile.fast_scan["focus_lost_after_results"], 3)
         self.assertEqual(profile.threads, 8)

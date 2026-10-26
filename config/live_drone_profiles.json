@@ -7,17 +7,17 @@
         "source": "/dev/v4l/by-id/usb-UltraSemi_USB3_Video_73908951-video-index0",
         "model": "models/anti_uav_fast_320_int8_pc.onnx",
         "confidence": 0.32,
-        "min_confidence": 0.05,
+        "min_confidence": 0.13,
         "tile_size": 640,
-        "tile_overlap": 0.2,
+        "tile_overlap": 0.16,
         "threads": 2,
         "full_frame": false
       },
       "capture": {
         "pixel_format": "YUYV",
         "width": 1280,
-        "height": 720,
-        "fps": 60,
+        "height": 960,
+        "fps": 50,
         "buffer_size": 1
       },
       "display": {
@@ -43,7 +43,7 @@
         "max_match_distance_fraction": 0.25
       },
       "fast_scan": {
-        "enabled": false,
+        "enabled": true,
         "focus_min_confidence": 0.15,
         "focus_crop_width": 640,
         "focus_crop_height": 640,

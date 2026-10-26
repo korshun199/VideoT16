@@ -2,82 +2,18 @@
 
 set -Eeuo pipefail
 
-# По умолчанию запускает текущую рабочую V2-версию с быстрым поиском.
+# Находит корень проекта относительно файла запуска, а не текущего каталога.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ "${1:-}" == "--benchmark" ]]; then
-    shift
-    exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/benchmark_live_inference.py" "$@"
-fi
 
 if [[ "$#" -eq 0 ]]; then
-    exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/live_pipeline_trial.py" --profile sky --fast
+    # Запускает профиль sky напрямую, не показывая редактор.
+    exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/live_pipeline_trial.py" --profile sky
 fi
 
-if [[ "${1:-}" == "--v2" ]]; then
-    if [[ "$#" -eq 2 && "${2}" == "--run" ]]; then
-        exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/live_pipeline_trial.py" --profile sky
-    fi
-    if [[ "$#" -eq 3 && "${2}" == "--fast" && "${3}" == "--run" ]]; then
-        exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/live_pipeline_trial.py" --profile sky --fast
-    fi
-    if [[ "$#" -ne 1 ]]; then
-        echo "Окно настроек V2: ./lcam --v2"
-        echo "Прямой запуск профиля: ./lcam --v2 --run"
-        echo "Быстрый поиск без сохранения: ./lcam --v2 --fast --run"
-        exit 2
-    fi
+if [[ "$#" -eq 1 && "$1" == "--m" ]]; then
+    # Открывает редактор именно для профиля, который запускается без меню.
     exec "$ROOT/.venv/bin/python3" "$ROOT/config/editor.py" --config-file live_drone_profiles.json
 fi
 
-if [[ "${1:-}" == "--trial" ]]; then
-    shift
-    exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/live_drone_trial.py" --profile sky "$@"
-fi
-
-if [[ "${1:-}" != "--production" ]]; then
-    if [[ "$#" -ne 0 ]]; then
-        echo "Рабочий запуск: ./lcam"
-        echo "Окно настроек V2: ./lcam --v2"
-        echo "Старый стенд: ./lcam --trial"
-        echo "Обычная система: ./lcam --production [параметры]"
-        exit 2
-    fi
-fi
-shift
-
-# Запускает обычное распознавание с параметрами из config/runtime_settings.json.
-mapfile -t SETTINGS < <(
-    "$ROOT/.venv/bin/python3" - "$ROOT" <<'PY'
-from pathlib import Path
-import sys
-
-root = Path(sys.argv[1])
-sys.path.insert(0, str(root))
-from config.runtime_settings import load_settings
-
-desktop = load_settings(root / "config/runtime_settings.json")["desktop"]
-for key in (
-    "camera_device", "model_path", "confidence_percent", "inference_size",
-    "inference_interval", "capture_width", "capture_height", "camera_fps", "clean_window",
-):
-    print(desktop[key])
-PY
-)
-
-if [[ "${#SETTINGS[@]}" -ne 9 ]]; then
-    echo "Ошибка: не удалось прочитать раздел desktop из config/runtime_settings.json" >&2
-    exit 1
-fi
-
-export VIDEOT16_CAMERA="${SETTINGS[0]}"
-export VIDEOT16_MODEL="$ROOT/${SETTINGS[1]}"
-export VIDEOT16_CONFIDENCE_PERCENT="${SETTINGS[2]}"
-export VIDEOT16_INFERENCE_SIZE="${SETTINGS[3]}"
-export VIDEOT16_INFERENCE_INTERVAL="${SETTINGS[4]}"
-export VIDEOT16_CAPTURE_WIDTH="${SETTINGS[5]}"
-export VIDEOT16_CAPTURE_HEIGHT="${SETTINGS[6]}"
-export VIDEOT16_CAMERA_FPS="${SETTINGS[7]}"
-export VIDEOT16_CLEAN_WINDOW="${SETTINGS[8]}"
-
-echo "VideoT16: камера=${VIDEOT16_CAMERA}, захват=${SETTINGS[5]}x${SETTINGS[6]}@${SETTINGS[7]}, модель=${SETTINGS[1]}, порог=${SETTINGS[2]}%, размер=${SETTINGS[3]}"
-exec "$ROOT/cam" "$@"
+printf 'Использование:\n  ./lcam      запуск сохранённого профиля sky\n  ./lcam --m  меню настроек профиля sky\n' >&2
+exit 2

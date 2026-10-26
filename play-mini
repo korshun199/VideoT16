@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Передаёт видеоплеер на минибук и управляет только его окном через SSH.
+
+set -Eeuo pipefail
+
+# Адрес минибука и локальные исходники плеера.
+REMOTE="oleg@192.168.20.132"
+PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PLAYER_SOURCE="${PROJECT_ROOT}/scripts/step_video_player.py"
+REMOTE_HANDLER="${PROJECT_ROOT}/scripts/play_mini_remote.py"
+ACTION="${1:-}"
+VIDEO_NAME="${2:-}"
+
+show_help() {
+    # Показывает короткую справку по командам SSH-плеера.
+    printf 'Использование:\n'
+    printf '  %s start ИМЯ_ФАЙЛА   открыть плеер и видео из /home/work/video\n' "${0##*/}"
+    printf '  %s stop              закрыть плеер VideoT16\n' "${0##*/}"
+    printf '  %s --help            показать эту справку\n' "${0##*/}"
+    printf '\nКнопка «Стоп» в окне ставит видео на паузу.\n'
+}
+
+if [[ "${ACTION}" == "-h" || "${ACTION}" == "--help" ]]; then
+    show_help
+    exit 0
+fi
+
+case "${ACTION}" in
+    start)
+        if (( $# != 2 )); then
+            printf 'Ошибка: для start укажи имя видеофайла.\n' >&2
+            show_help >&2
+            exit 2
+        fi
+        if [[ "${VIDEO_NAME}" == */* || "${VIDEO_NAME}" == -* || "${VIDEO_NAME}" == "." || "${VIDEO_NAME}" == ".." ]]; then
+            printf 'Ошибка: укажи только имя файла из /home/work/video, без пути.\n' >&2
+            exit 2
+        fi
+        if [[ ! -f "${PLAYER_SOURCE}" || ! -f "${REMOTE_HANDLER}" ]]; then
+            printf 'Ошибка: не найден исходник GTK-плеера или SSH-обработчик.\n' >&2
+            exit 2
+        fi
+        ;;
+    stop)
+        if (( $# != 1 )); then
+            printf 'Ошибка: команда stop не принимает имя файла.\n' >&2
+            show_help >&2
+            exit 2
+        fi
+        VIDEO_NAME=""
+        ;;
+    *)
+        printf 'Ошибка: команда должна быть start или stop.\n' >&2
+        show_help >&2
+        exit 2
+        ;;
+esac
+
+if ! command -v ssh >/dev/null 2>&1; then
+    printf 'Ошибка: на этом ноутбуке не найдена команда ssh.\n' >&2
+    exit 127
+fi
+
+# Base64 защищает имя и исходник от интерпретации удалённой оболочкой.
+VIDEO_NAME_B64="$(printf '%s' "${VIDEO_NAME}" | base64 | tr -d '\r\n')"
+PLAYER_SOURCE_B64=""
+if [[ "${ACTION}" == "start" ]]; then
+    PLAYER_SOURCE_B64="$(base64 < "${PLAYER_SOURCE}" | tr -d '\r\n')"
+    printf 'Подключаюсь к %s и запускаю пошаговый GTK/GStreamer-плеер для %s...\n' "${REMOTE}" "${VIDEO_NAME}"
+else
+    printf 'Подключаюсь к %s и закрываю только плеер VideoT16...\n' "${REMOTE}"
+fi
+
+# Удалённая сторона получает небольшой координатор через stdin; видео не копируется.
+ssh -T -o ConnectTimeout=8 "${REMOTE}" \
+    "REMOTE_ACTION='${ACTION}' VIDEO_NAME_B64='${VIDEO_NAME_B64}' PLAYER_SOURCE_B64='${PLAYER_SOURCE_B64}' python3 -" \
+    < "${REMOTE_HANDLER}"

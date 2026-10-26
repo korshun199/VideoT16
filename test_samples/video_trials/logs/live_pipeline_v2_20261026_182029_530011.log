@@ -1,0 +1,20 @@
+2026-10-26 18:20:29,530 INFO === VideoT16 V2 live YOLO ===
+2026-10-26 18:20:29,530 INFO Журнал: /home/work/VideoT16/test_samples/video_trials/logs/live_pipeline_v2_20261026_182029_530011.log
+2026-10-26 18:20:29,819 INFO Запрос захвата формат=YUYV: принят
+2026-10-26 18:20:29,819 INFO Запрос захвата ширина=1920: принят
+2026-10-26 18:20:29,852 INFO Запрос захвата высота=1080: принят
+2026-10-26 18:20:29,869 INFO Запрос захвата FPS=30: принят
+2026-10-26 18:20:29,869 INFO Фактический захват: 1920x1080 @ 5.0 FPS YUYV
+2026-10-26 18:20:30,042 INFO V2 single YOLO window: profile=sky | model=/home/work/VideoT16/models/fpv_drone_latest.onnx | input=640 | source=/dev/video2 | capture=1920x1080@5.0 YUYV | ORT threads=8
+2026-10-26 18:20:30,042 INFO YOLO-режим: быстрый sweep/focus | плитка=640, фокус=640x640, кандидат от 15%, сброс после 3 ответов
+2026-10-26 18:20:30,042 INFO Три этапа: capture-buffer → YOLO-result-buffer → delayed-display | задержка=2200ms | буфер до 512MiB | FPS окна=60 | box-hold=1000ms
+2026-10-26 18:20:30,042 INFO Этап 1 сохраняет кадры; этап 2 распознаёт свежие ID; этап 3 привязывает рамку к ID выводимого кадра.
+2026-10-26 18:20:33,595 INFO STAGES cap=6@1.7 read=404.4/1505.4ms gap=404.5/406.2ms same=0% framebuf=1..6(6,35MiB) | infer_in=6/6 overwrite=0 | infer_out=1 det=0 pass=0 raw=0% q=0ms yolo=63ms | display=1 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=0.3
+2026-10-26 18:20:34,804 INFO STAGES cap=9@2.5 read=404.8/1505.4ms gap=404.5/408.8ms same=0% framebuf=1..9(9,53MiB) | infer_in=9/9 overwrite=0 | infer_out=4 det=0 pass=0 raw=0% q=0ms yolo=61ms | display=4 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=2.5
+2026-10-26 18:20:35,814 INFO STAGES cap=12@3.0 read=404.5/408.8ms gap=404.5/406.4ms same=0% framebuf=1..12(12,71MiB) | infer_in=12/12 overwrite=0 | infer_out=7 det=0 pass=0 raw=0% q=0ms yolo=57ms | display=7 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=3.0
+2026-10-26 18:20:37,026 INFO STAGES cap=15@2.5 read=404.5/408.8ms gap=404.5/406.4ms same=0% framebuf=1..15(15,88MiB) | infer_in=15/15 overwrite=0 | infer_out=10 det=0 pass=0 raw=0% q=0ms yolo=60ms | display=10 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=2.5
+2026-10-26 18:20:38,238 INFO STAGES cap=18@2.5 read=403.9/408.8ms gap=404.0/406.4ms same=0% framebuf=1..18(18,106MiB) | infer_in=18/18 overwrite=0 | infer_out=13 det=0 pass=0 raw=0% q=0ms yolo=57ms | display=13 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=2.5
+2026-10-26 18:20:39,247 INFO STAGES cap=21@3.0 read=404.4/408.8ms gap=404.0/406.4ms same=0% framebuf=1..21(21,124MiB) | infer_in=21/21 overwrite=0 | infer_out=16 det=0 pass=0 raw=0% q=0ms yolo=63ms | display=16 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=3.0
+2026-10-26 18:20:40,464 INFO STAGES cap=24@2.5 read=404.4/408.8ms gap=404.5/406.4ms same=0% framebuf=1..24(24,142MiB) | infer_in=24/24 overwrite=0 | infer_out=19 det=0 pass=0 raw=0% q=0ms yolo=68ms | display=19 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=2.5
+2026-10-26 18:20:41,675 INFO STAGES cap=27@2.5 read=404.6/408.8ms gap=404.5/408.7ms same=0% framebuf=1..27(27,160MiB) | infer_in=27/27 overwrite=0 | infer_out=22 det=0 pass=0 raw=0% q=0ms yolo=59ms | display=22 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=2.5
+2026-10-26 18:20:42,201 INFO V2 остановлен; длительность 12.2 с

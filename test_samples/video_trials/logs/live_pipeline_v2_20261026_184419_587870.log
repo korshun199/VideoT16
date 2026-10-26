@@ -1,0 +1,28 @@
+2026-10-26 18:44:19,588 INFO === VideoT16 V2 live YOLO ===
+2026-10-26 18:44:19,588 INFO Журнал: /home/work/VideoT16/test_samples/video_trials/logs/live_pipeline_v2_20261026_184419_587870.log
+2026-10-26 18:44:20,039 INFO Запрос захвата формат=MJPG: принят
+2026-10-26 18:44:20,039 INFO Запрос захвата ширина=1920: принят
+2026-10-26 18:44:20,073 INFO Запрос захвата высота=1080: принят
+2026-10-26 18:44:20,073 INFO Запрос захвата FPS=30: принят
+2026-10-26 18:44:20,073 INFO Фактический захват: 1920x1080 @ 30.0 FPS MJPG
+2026-10-26 18:44:20,169 INFO V2 single YOLO window: profile=sky | model=/home/work/VideoT16/models/anti_uav_best.onnx | input=320 | source=/dev/video2 | capture=1920x1080@30.0 MJPG | ORT threads=8
+2026-10-26 18:44:20,169 INFO YOLO-режим: быстрый sweep/focus | плитка=640, фокус=640x640, кандидат от 15%, сброс после 3 ответов
+2026-10-26 18:44:20,169 INFO Три этапа: capture-buffer → YOLO-result-buffer → delayed-display | задержка=2200ms | буфер до 512MiB | FPS окна=60 | box-hold=1000ms
+2026-10-26 18:44:20,169 INFO Этап 1 сохраняет кадры; этап 2 распознаёт свежие ID; этап 3 привязывает рамку к ID выводимого кадра.
+2026-10-26 18:44:23,085 INFO STAGES cap=11@3.8 read=204.2/222.4ms gap=203.6/210.3ms same=0% framebuf=1..11(11,65MiB) | infer_in=11/11 overwrite=1 | infer_out=1 det=0 pass=0 raw=0% q=0ms yolo=221ms | display=1 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=0.3
+2026-10-26 18:44:24,113 INFO STAGES cap=16@4.9 read=203.5/222.4ms gap=203.6/210.3ms same=0% framebuf=1..16(16,94MiB) | infer_in=16/16 overwrite=1 | infer_out=6 det=0 pass=0 raw=0% q=102ms yolo=226ms | display=6 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=4.9
+2026-10-26 18:44:25,297 INFO STAGES cap=22@5.1 read=203.5/211.7ms gap=203.6/210.3ms same=0% framebuf=1..22(22,130MiB) | infer_in=22/22 overwrite=1 | infer_out=12 det=0 pass=0 raw=0% q=53ms yolo=161ms | display=12 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=5.1
+2026-10-26 18:44:26,327 INFO STAGES cap=27@4.9 read=203.5/211.7ms gap=203.0/210.3ms same=0% framebuf=1..27(27,160MiB) | infer_in=27/27 overwrite=1 | infer_out=17 det=0 pass=0 raw=0% q=17ms yolo=155ms | display=17 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=4.9
+2026-10-26 18:44:27,518 INFO STAGES cap=33@5.0 read=204.2/211.7ms gap=203.6/210.8ms same=0% framebuf=1..33(33,195MiB) | infer_in=33/33 overwrite=3 | infer_out=23 det=0 pass=0 raw=0% q=0ms yolo=155ms | display=23 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=5.0
+2026-10-26 18:44:28,557 INFO STAGES cap=38@4.8 read=203.0/211.7ms gap=203.1/210.8ms same=0% framebuf=1..38(38,225MiB) | infer_in=38/38 overwrite=5 | infer_out=28 det=0 pass=0 raw=0% q=142ms yolo=336ms | display=28 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=4.8
+2026-10-26 18:44:29,761 INFO STAGES cap=44@5.0 read=203.0/210.7ms gap=203.1/210.3ms same=0% framebuf=1..44(44,261MiB) | infer_in=44/44 overwrite=7 | infer_out=33 det=0 pass=0 raw=0% q=129ms yolo=356ms | display=34 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=5.0
+2026-10-26 18:44:30,771 INFO STAGES cap=49@4.9 read=203.0/210.7ms gap=202.5/210.3ms same=0% framebuf=1..49(49,290MiB) | infer_in=49/49 overwrite=10 | infer_out=38 det=0 pass=0 raw=0% q=153ms yolo=363ms | display=39 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=4.9
+2026-10-26 18:44:31,779 INFO STAGES cap=54@5.0 read=203.0/210.7ms gap=203.0/210.3ms same=0% framebuf=1..54(54,320MiB) | infer_in=54/54 overwrite=12 | infer_out=43 det=0 pass=0 raw=0% q=190ms yolo=422ms | display=44 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=5.0
+2026-10-26 18:44:32,785 INFO STAGES cap=59@5.0 read=202.6/211.7ms gap=202.5/210.8ms same=0% framebuf=1..59(59,350MiB) | infer_in=59/59 overwrite=14 | infer_out=49 det=0 pass=0 raw=0% q=156ms yolo=392ms | display=49 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=5.0
+2026-10-26 18:44:33,803 INFO STAGES cap=65@5.9 read=202.3/210.7ms gap=202.4/210.3ms same=0% framebuf=1..65(65,385MiB) | infer_in=65/65 overwrite=17 | infer_out=53 det=0 pass=0 raw=0% q=84ms yolo=343ms | display=54 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=4.9
+2026-10-26 18:44:34,827 INFO STAGES cap=70@4.9 read=202.1/210.7ms gap=202.2/210.8ms same=0% framebuf=1..70(70,415MiB) | infer_in=70/70 overwrite=19 | infer_out=58 det=0 pass=0 raw=0% q=125ms yolo=351ms | display=59 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=4.9
+2026-10-26 18:44:36,013 INFO STAGES cap=75@4.2 read=202.1/210.7ms gap=202.2/210.3ms same=0% framebuf=1..75(75,444MiB) | infer_in=75/75 overwrite=22 | infer_out=65 det=0 pass=0 raw=0% q=166ms yolo=379ms | display=65 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=5.1
+2026-10-26 18:44:37,016 INFO STAGES cap=80@5.0 read=202.1/210.7ms gap=202.2/210.8ms same=0% framebuf=1..80(80,474MiB) | infer_in=80/80 overwrite=24 | infer_out=69 det=0 pass=0 raw=0% q=135ms yolo=398ms | display=70 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=5.0
+2026-10-26 18:44:38,038 INFO STAGES cap=85@4.9 read=202.1/211.0ms gap=202.2/210.8ms same=0% framebuf=1..85(85,504MiB) | infer_in=85/85 overwrite=26 | infer_out=75 det=0 pass=0 raw=0% q=81ms yolo=380ms | display=75 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=4.9
+2026-10-26 18:44:39,042 INFO STAGES cap=90@5.0 read=202.1/210.7ms gap=202.2/210.8ms same=0% framebuf=5..90(86,510MiB) | infer_in=90/90 overwrite=29 | infer_out=80 det=0 pass=0 raw=0% q=196ms yolo=353ms | display=80 skip=0 overlay=-:NONE boxes=0 bage=-1ms | fps=5.0
+2026-10-26 18:44:39,244 INFO V2 остановлен; длительность 19.1 с

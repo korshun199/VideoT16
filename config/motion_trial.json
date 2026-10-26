@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "capture": {
+    "camera_device": "auto",
+    "pixel_format": "MJPG",
+    "width": 1280,
+    "height": 960,
+    "fps": 60,
+    "buffer_size": 1
+  },
+  "roi": {
+    "width_percent": 50,
+    "height_percent": 50,
+    "center_x_percent": 50,
+    "center_y_percent": 50
+  },
+  "motion": {
+    "max_features": 600,
+    "feature_quality": 0.01,
+    "min_feature_distance": 5,
+    "min_background_features": 8,
+    "min_background_inliers": 6,
+    "ransac_threshold_px": 2.5,
+    "max_background_shift_px": 100,
+    "luma_threshold": 18,
+    "chroma_threshold": 22,
+    "min_blob_area": 8,
+    "max_blob_area_percent": 30,
+    "morphology_radius": 0,
+    "suppress_specular": false,
+    "specular_value_min": 245,
+    "specular_saturation_max": 35,
+    "persistence_frames": 1,
+    "track_iou_percent": 10,
+    "max_candidates": 20,
+    "min_local_color_contrast": 0,
+    "opencv_threads": 1
+  },
+  "detector": {
+    "enabled": true,
+    "model_path": "models/anti_uav_fast_320_int8_pc.onnx",
+    "confidence_percent": 20,
+    "inference_size": 320,
+    "threads": 0,
+    "max_detection_age_ms": 700
+  },
+  "display": {
+    "output_device": "monitor",
+    "window_width": 1600,
+    "window_height": 1000,
+    "show_motion_mask": true,
+    "show_roi": true,
+    "mask_opacity_percent": 45,
+    "roi_thickness": 1,
+    "motion_box_thickness": 2,
+    "detector_box_thickness": 2,
+    "font_scale": 0.65,
+    "status_height": 64,
+    "motion_color_rgb": [255, 165, 0],
+    "detector_color_rgb": [40, 255, 90],
+    "roi_color_rgb": [80, 210, 255],
+    "mask_color_rgb": [255, 80, 40],
+    "status_background_rgb": [24, 30, 38],
+    "status_text_rgb": [240, 245, 250]
+  },
+  "diagnostics": {
+    "log_dir": "logs/motion_trials",
+    "interval_ms": 1000
+  }
+}

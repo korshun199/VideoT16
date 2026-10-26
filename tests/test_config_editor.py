@@ -7,13 +7,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QComboBox, QGroupBox, QLabel, QMessageBox, QSlider
 
-from config.editor import CONFIG_DIR, PROJECT_DIR, ConfigEditorWindow, StaleConfigError, apply_defaults, available_capture_modes, build_options, launcher_command, list_config_files, numeric_spec, read_config, save_config
+from config.editor import CONFIG_DIR, PROJECT_DIR, ConfigEditorWindow, StaleConfigError, apply_defaults, available_capture_modes, build_options, compatible_capture_modes, launcher_command, list_config_files, numeric_spec, read_config, required_output_buffer_mb, runtime_launch_environment, save_config
 from config.runtime_settings import DEFAULT_SETTINGS
 
 
@@ -80,23 +81,51 @@ class ConfigEditorTests(unittest.TestCase):
         self.assertIn({"value": "auto", "label": "Автовыбор"}, options["cameras"])
         self.assertIn(320, options["sizes"])
 
-    def test_motion_trial_config_routes_to_separate_launcher_only_on_linux(self) -> None:
-        """Новый Linux JSON запускает lcam3, а штатные файлы и Windows не меняют маршрут."""
+    def test_configurations_route_to_their_matching_launcher(self) -> None:
+        """Профиль sky запускает lcam, а motion trial и старый runtime идут отдельно."""
         launcher, command = launcher_command(self.project_dir, "motion_trial.json", platform="posix")
         self.assertEqual(launcher, self.project_dir / "lcam3")
         self.assertEqual(command, [sys.executable, str(launcher)])
 
         launcher, command = launcher_command(self.project_dir, "live_drone_profiles.json", platform="posix")
         self.assertEqual(launcher, self.project_dir / "lcam")
-        self.assertEqual(command, [str(launcher), "--v2", "--run"])
+        self.assertEqual(command, [str(launcher)])
 
         launcher, command = launcher_command(self.project_dir, "runtime_settings.json", platform="posix")
-        self.assertEqual(launcher, self.project_dir / "lcam")
+        self.assertEqual(launcher, self.project_dir / "cam")
         self.assertEqual(command, [str(launcher)])
 
         launcher, command = launcher_command(self.project_dir, "motion_trial.json", platform="nt")
         self.assertEqual(launcher, self.project_dir / "start.py")
         self.assertEqual(command, [sys.executable, str(launcher)])
+
+    def test_runtime_settings_are_passed_to_legacy_cam_without_an_extra_lcam_mode(self) -> None:
+        """Старый редактор передаёт сохранённый runtime JSON в cam через переменные среды."""
+        config = {
+            "desktop": {
+                "camera_device": "/dev/video4",
+                "model_path": "models/standard.onnx",
+                "confidence_percent": 55,
+                "inference_size": 640,
+                "inference_interval": 2,
+                "capture_width": 1280,
+                "capture_height": 720,
+                "camera_fps": 55,
+                "clean_window": True,
+            }
+        }
+
+        environment = runtime_launch_environment(config, self.project_dir)
+
+        self.assertEqual(environment["VIDEOT16_CAMERA"], "/dev/video4")
+        self.assertEqual(environment["VIDEOT16_MODEL"], str(self.project_dir / "models/standard.onnx"))
+        self.assertEqual(environment["VIDEOT16_CONFIDENCE_PERCENT"], "55")
+        self.assertEqual(environment["VIDEOT16_CLEAN_WINDOW"], "true")
+
+    def test_runtime_settings_environment_rejects_missing_fields(self) -> None:
+        """Сообщает, если старой схеме нечего передать программе cam."""
+        with self.assertRaisesRegex(ValueError, "не хватает настроек"):
+            runtime_launch_environment({"desktop": {}}, self.project_dir)
 
     def test_motion_trial_menu_launches_python_entrypoint(self) -> None:
         """Кнопка запуска выбранного JSON вызывает отдельный прототип через Python."""
@@ -123,7 +152,7 @@ class ConfigEditorTests(unittest.TestCase):
             "version": 1,
             "profiles": {"sky": {
                 "settings": {"model": "models/first.onnx", "tile_size": 640},
-                "capture": {"width": 1280, "height": 960, "fps": 60, "buffer_size": 1},
+                "capture": {"pixel_format": "YUYV", "width": 1280, "height": 960, "fps": 60, "buffer_size": 1},
             }},
         }), encoding="utf-8")
         options = {
@@ -132,7 +161,17 @@ class ConfigEditorTests(unittest.TestCase):
                 {"value": "models/second.onnx", "label": "second — вход 640×640"},
             ],
             "model_input_sizes": {"models/first.onnx": 320, "models/second.onnx": 640},
-            "capture_modes": [{"width": 1280, "height": 960, "fps": 60, "label": "1280×960 @ 60 кадр/с"}],
+            "capture_modes": [{"pixel_format": "YUYV", "width": 1280, "height": 960, "fps": 60, "label": "1280×960 @ 60 кадр/с — YUYV"}],
+            "model_capture_options": [
+                {
+                    "value": ("models/first.onnx", 60, 640, "YUYV", 1280, 960),
+                    "label": "first.onnx (60 FPS, 1280×960, YUYV)",
+                },
+                {
+                    "value": ("models/second.onnx", 60, 640, "YUYV", 1280, 960),
+                    "label": "second.onnx (60 FPS, 1280×960, YUYV)",
+                },
+            ],
             "cameras": [{"value": "auto", "label": "Автовыбор"}],
             "camera_sources": [], "pixel_formats": [], "output_devices": [],
             "fonts": [], "positions": [], "sizes": [320, 640],
@@ -144,15 +183,27 @@ class ConfigEditorTests(unittest.TestCase):
             self.assertEqual(self.window.file_combo.currentText(), "live_drone_profiles.json")
             model_combo = next(
                 combo for combo in self.window.findChildren(QComboBox)
-                if combo.findData("models/first.onnx") >= 0
+                if any(
+                    isinstance(combo.itemData(index), tuple)
+                    and combo.itemData(index)[0] == "models/first.onnx"
+                    for index in range(combo.count())
+                )
             )
-            model_combo.setCurrentIndex(model_combo.findData("models/second.onnx"))
+            second_index = next(
+                index for index in range(model_combo.count())
+                if isinstance(model_combo.itemData(index), tuple)
+                and model_combo.itemData(index)[0] == "models/second.onnx"
+            )
+            model_combo.setCurrentIndex(second_index)
             self.application.processEvents()
 
         profile = self.window.current_data["profiles"]["sky"]
         self.assertEqual(profile["settings"]["model"], "models/second.onnx")
         self.assertEqual(profile["settings"]["tile_size"], 640)
-        self.assertEqual((profile["capture"]["width"], profile["capture"]["height"], profile["capture"]["fps"]), (1280, 960, 60))
+        self.assertEqual(
+            (profile["capture"]["pixel_format"], profile["capture"]["width"], profile["capture"]["height"], profile["capture"]["fps"]),
+            ("YUYV", 1280, 960, 60),
+        )
 
     def test_v2_model_selector_does_not_offer_incompatible_current_model(self) -> None:
         """Скрывает PT/неподтверждённые модели из V2-списка, оставляя выбор валидной ONNX."""
@@ -161,13 +212,19 @@ class ConfigEditorTests(unittest.TestCase):
             "version": 1,
             "profiles": {"sky": {
                 "settings": {"model": "models/legacy.pt", "tile_size": 640},
-                "capture": {"width": 1280, "height": 960, "fps": 60, "buffer_size": 1},
+                "capture": {"pixel_format": "YUYV", "width": 1280, "height": 960, "fps": 60, "buffer_size": 1},
             }},
         }), encoding="utf-8")
         options = {
             "models": [{"value": "models/valid.onnx", "label": "valid — вход 320×320"}],
             "model_input_sizes": {"models/valid.onnx": 320},
-            "capture_modes": [{"width": 1280, "height": 960, "fps": 60, "label": "1280×960 @ 60 кадр/с"}],
+            "capture_modes": [{"pixel_format": "YUYV", "width": 1280, "height": 960, "fps": 60, "label": "1280×960 @ 60 кадр/с — YUYV"}],
+            "model_capture_options": [
+                {
+                    "value": ("models/valid.onnx", 60, 640, "YUYV", 1280, 960),
+                    "label": "valid.onnx (60 FPS, 1280×960, YUYV)",
+                },
+            ],
             "cameras": [], "camera_sources": [], "pixel_formats": [], "output_devices": [],
             "fonts": [], "positions": [], "sizes": [320, 640],
         }
@@ -177,14 +234,23 @@ class ConfigEditorTests(unittest.TestCase):
 
         model_combo = next(
             combo for combo in self.window.findChildren(QComboBox)
-            if combo.count() and combo.itemData(combo.count() - 1) == "models/valid.onnx"
+            if combo.count()
+            and isinstance(combo.itemData(combo.count() - 1), tuple)
+            and combo.itemData(combo.count() - 1)[0] == "models/valid.onnx"
         )
         self.assertIsNone(model_combo.currentData())
-        self.assertNotIn("models/legacy.pt", [model_combo.itemData(index) for index in range(model_combo.count())])
+        self.assertNotIn(
+            "models/legacy.pt",
+            [
+                item[0]
+                for index in range(model_combo.count())
+                if isinstance((item := model_combo.itemData(index)), tuple)
+            ],
+        )
 
     def test_v2_capture_mode_list_is_read_from_selected_device(self) -> None:
         """Разбирает только форматы и FPS, которые V4L2 перечислил у камеры."""
-        output = """[0]: 'MJPG'\n  Size: Discrete 1280x720\n    Interval: Discrete 0.017s (60.000 fps)\n    Interval: Discrete 0.033s (30.000 fps)\n"""
+        output = """[0]: 'MJPG'\n  Size: Discrete 1280x720\n    Interval: Discrete 0.017s (60.000 fps)\n    Interval: Discrete 0.033s (30.000 fps)\n[1]: 'YUYV'\n  Size: Discrete 1280x720\n    Interval: Discrete 0.033s (30.000 fps)\n"""
         with patch("config.editor.subprocess.run", return_value=Mock(returncode=0, stdout=output)) as run:
             modes = available_capture_modes("/dev/video4")
 
@@ -192,10 +258,113 @@ class ConfigEditorTests(unittest.TestCase):
         self.assertEqual(
             modes,
             [
-                {"width": 1280, "height": 720, "fps": 60, "label": "1280×720 @ 60 кадр/с"},
-                {"width": 1280, "height": 720, "fps": 30, "label": "1280×720 @ 30 кадр/с"},
+                {"pixel_format": "MJPG", "width": 1280, "height": 720, "fps": 60, "label": "1280×720 @ 60 кадр/с — MJPG"},
+                {"pixel_format": "YUYV", "width": 1280, "height": 720, "fps": 30, "label": "1280×720 @ 30 кадр/с — YUYV"},
+                {"pixel_format": "MJPG", "width": 1280, "height": 720, "fps": 30, "label": "1280×720 @ 30 кадр/с — MJPG"},
             ],
         )
+
+    def test_v2_capture_modes_follow_selected_model_input_size(self) -> None:
+        """640-модель не получает заведомо мелкий поток, а формат остаётся частью режима."""
+        modes = [
+            {"pixel_format": "MJPG", "width": 640, "height": 480, "fps": 60, "label": "small"},
+            {"pixel_format": "YUYV", "width": 1280, "height": 720, "fps": 60, "label": "large"},
+        ]
+        self.assertEqual(compatible_capture_modes(modes, 640), [modes[1]])
+        self.assertEqual(compatible_capture_modes(modes, 320), modes)
+
+    def test_v2_model_menu_lists_each_compatible_50_and_60_fps_capture_mode(self) -> None:
+        """Показывает все доступные модели режимы 50/60 FPS и отмечает требование к буферу."""
+        model_path = self.models_dir / "drone.onnx"
+        resolutions = [
+            (2560, 1440), (1920, 1080), (1360, 768), (1280, 1024), (1280, 960),
+            (1280, 720), (1024, 768), (800, 600), (720, 576), (720, 480), (640, 480),
+        ]
+        modes = [
+            {
+                "pixel_format": pixel_format,
+                "width": width,
+                "height": height,
+                "fps": fps,
+                "label": f"{width}×{height} @ {fps} — {pixel_format}",
+            }
+            for pixel_format in ("MJPG", "YUYV")
+            for width, height in resolutions
+            for fps in (60, 50, 30)
+        ]
+        dimensions = [SimpleNamespace(dim_value=value) for value in (1, 3, 320, 320)]
+        onnx_model = SimpleNamespace(
+            graph=SimpleNamespace(
+                input=[
+                    SimpleNamespace(
+                        type=SimpleNamespace(
+                            tensor_type=SimpleNamespace(
+                                shape=SimpleNamespace(dim=dimensions),
+                            ),
+                        ),
+                    ),
+                ],
+            ),
+        )
+        onnx_module = ModuleType("onnx")
+        onnx_module.load_model = Mock(return_value=onnx_model)
+        profile = {
+            "version": 1,
+            "profiles": {
+                "sky": {
+                    "settings": {
+                        "source": "/dev/video0",
+                        "model": "models/drone.onnx",
+                        "tile_size": 640,
+                    },
+                    "capture": {
+                        "pixel_format": "MJPG",
+                        "width": 1280,
+                        "height": 720,
+                        "fps": 60,
+                    },
+                    "pipeline_v2": {
+                        "output_buffer_max_mb": 512,
+                        "output_delay_ms": 2200,
+                    },
+                },
+            },
+        }
+
+        with patch.dict(sys.modules, {"onnx": onnx_module}), patch(
+            "config.editor.available_capture_modes", return_value=modes,
+        ):
+            options = build_options(self.project_dir, profile)
+
+        model_options = [
+            item for item in options["model_capture_options"]
+            if item["value"][0] == "models/drone.onnx"
+        ]
+        self.assertEqual(len(model_options), 44)
+        self.assertEqual({item["value"][1] for item in model_options}, {50, 60})
+        self.assertEqual({item["value"][2] for item in model_options}, {640})
+        actual_modes = {
+            (item["value"][1], item["value"][3], item["value"][4], item["value"][5])
+            for item in model_options
+        }
+        expected_modes = {
+            (fps, pixel_format, width, height)
+            for fps in (50, 60)
+            for pixel_format in ("MJPG", "YUYV")
+            for width, height in resolutions
+        }
+        self.assertEqual(actual_modes, expected_modes)
+        self.assertEqual(required_output_buffer_mb(1280, 720, 60, 2200), 349)
+        self.assertEqual(required_output_buffer_mb(2560, 1440, 60, 2200), 1393)
+        self.assertTrue(
+            all(
+                "FPS," in item["label"]
+                and ("MJPG" in item["label"] or "YUYV" in item["label"])
+                for item in model_options
+            )
+        )
+        largest_mode = next(item for item in model_options if item["value"][4:6] == (2560, 1440) and item["value"][1] == 60)
+        self.assertIn("нужно не менее 1393 МиБ", largest_mode["tooltip"])
 
     def test_v2_numeric_parameters_have_safe_ranges(self) -> None:
         """Показывает основные параметры буферизованного вывода V2 мышиными ползунками."""
@@ -250,9 +419,9 @@ class ConfigEditorTests(unittest.TestCase):
         self.assertIn("Настройки распознавания", labels)
         self.assertIn("Захват видео", labels)
 
-    def test_launch_button_starts_lcam_without_opening_camera_in_test(self) -> None:
-        """Проверяет запуск через кнопку, закрытие настроек и отсутствие доступа к камере в тесте."""
-        launcher = self.project_dir / "lcam"
+    def test_launch_button_starts_matching_cam_without_opening_camera_in_test(self) -> None:
+        """Проверяет запуск подходящей старой конфигурации и закрытие настроек без камеры."""
+        launcher = self.project_dir / "cam"
         launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         launcher.chmod(0o755)
         self.window = ConfigEditorWindow(self.project_dir, self.config_dir)
@@ -275,7 +444,7 @@ class ConfigEditorTests(unittest.TestCase):
 
     def test_launch_failure_keeps_settings_open(self) -> None:
         """Не закрывает настройки и сообщает об ошибке, если процесс не стартовал."""
-        launcher = self.project_dir / "lcam"
+        launcher = self.project_dir / "cam"
         launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         launcher.chmod(0o755)
         self.window = ConfigEditorWindow(self.project_dir, self.config_dir)

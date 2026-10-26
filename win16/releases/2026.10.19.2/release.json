@@ -1,0 +1,8 @@
+{
+  "format": "Video16 release v1",
+  "release_id": "2026.10.19.2",
+  "key_id": "owner-key-v1",
+  "payload_url": "https://raw.githubusercontent.com/korshun199/VideoT16/win16/win16/Video16.payload",
+  "payload_sha256": "2250fdc720d4e459b92abff1cd8014ee260a0417099ffed09bcf73e08a2eca3a",
+  "payload_size": 10592288
+}

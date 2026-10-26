@@ -1,0 +1,18 @@
+2026-10-26 16:42:54,143 INFO Запрос захвата формат=YUYV: принят
+2026-10-26 16:42:54,143 INFO Запрос захвата ширина=1280: принят
+2026-10-26 16:42:54,178 INFO Запрос захвата высота=960: принят
+2026-10-26 16:42:54,194 INFO Запрос захвата FPS=60: принят
+2026-10-26 16:42:54,195 INFO Фактический захват: 1280x960 @ 60.0 FPS YUYV
+2026-10-26 16:42:54,642 INFO V2 single YOLO window: profile=sky | model=/home/work/VideoT16/models/anti_uav_fast_320_int8_pc.onnx | input=320 | source=/dev/video0 | capture=1280x960@60.0 YUYV | ORT threads=8
+2026-10-26 16:42:54,643 INFO Три этапа: capture-buffer → YOLO-result-buffer → delayed-display | задержка=2200ms | буфер до 512MiB | FPS окна=60 | box-hold=1000ms
+2026-10-26 16:42:54,643 INFO Этап 1 сохраняет кадры; этап 2 распознаёт свежие ID; этап 3 привязывает рамку к ID выводимого кадра.
+2026-10-26 16:42:56,568 INFO STAGES cap=67@34.8 read=33.6/39.5ms gap=33.6/39.4ms same=100% framebuf=1..67(67,235MiB) | infer_in=67/67 overwrite=62 | infer_out=1 det=2 pass=2 raw=59% q=0ms yolo=838ms | display=1 skip=0 overlay=1:YOLO boxes=2 bage=0ms | fps=0.5
+2026-10-26 16:42:57,588 INFO STAGES cap=97@29.4 read=33.6/39.3ms gap=33.6/39.3ms same=100% framebuf=1..97(97,341MiB) | infer_in=97/97 overwrite=91 | infer_out=25 det=2 pass=2 raw=59% q=18ms yolo=642ms | display=32 skip=0 overlay=32-44:INTERPOLATED boxes=2 bage=0ms | fps=30.4
+2026-10-26 16:42:58,603 INFO STAGES cap=126@28.6 read=33.6/39.3ms gap=33.7/39.4ms same=100% framebuf=1..126(126,442MiB) | infer_in=126/126 overwrite=119 | infer_out=44 det=2 pass=2 raw=59% q=23ms yolo=715ms | display=62 skip=0 overlay=62-65:INTERPOLATED boxes=2 bage=0ms | fps=29.6
+2026-10-26 16:42:59,621 INFO STAGES cap=156@29.5 read=33.6/39.3ms gap=33.7/39.4ms same=100% framebuf=12..156(145,509MiB) | infer_in=156/156 overwrite=148 | infer_out=90 det=2 pass=2 raw=59% q=24ms yolo=826ms | display=92 skip=0 overlay=92-113:INTERPOLATED boxes=2 bage=0ms | fps=29.5
+2026-10-26 16:43:00,632 INFO STAGES cap=185@28.7 read=33.6/39.3ms gap=33.7/39.4ms same=100% framebuf=41..185(145,509MiB) | infer_in=185/185 overwrite=176 | infer_out=113 det=2 pass=2 raw=59% q=43ms yolo=1008ms | display=121 skip=0 overlay=121-143:INTERPOLATED boxes=2 bage=0ms | fps=28.7
+2026-10-26 16:43:01,632 INFO STAGES cap=214@29.0 read=33.6/39.3ms gap=33.8/39.4ms same=100% framebuf=70..214(145,509MiB) | infer_in=214/214 overwrite=203 | infer_out=143 det=2 pass=2 raw=59% q=25ms yolo=694ms | display=150 skip=0 overlay=150-163:INTERPOLATED boxes=2 bage=0ms | fps=29.0
+2026-10-26 16:43:02,649 INFO STAGES cap=243@28.5 read=33.7/39.3ms gap=34.0/39.5ms same=100% framebuf=99..243(145,509MiB) | infer_in=243/243 overwrite=231 | infer_out=163 det=2 pass=2 raw=59% q=20ms yolo=888ms | display=179 skip=0 overlay=179-189:INTERPOLATED boxes=2 bage=0ms | fps=28.5
+2026-10-26 16:43:03,654 INFO STAGES cap=271@27.9 read=33.7/39.4ms gap=34.0/39.7ms same=100% framebuf=127..271(145,509MiB) | infer_in=271/271 overwrite=258 | infer_out=189 det=2 pass=2 raw=59% q=20ms yolo=821ms | display=209 skip=0 overlay=209-213:INTERPOLATED boxes=1 bage=0ms | fps=29.9
+2026-10-26 16:43:04,682 INFO STAGES cap=299@27.2 read=33.9/39.7ms gap=34.1/40.0ms same=100% framebuf=155..299(145,509MiB) | infer_in=299/299 overwrite=285 | infer_out=213 det=1 pass=1 raw=41% q=26ms yolo=945ms | display=238 skip=0 overlay=238-240:INTERPOLATED boxes=1 bage=0ms | fps=28.2
+2026-10-26 16:43:05,539 INFO V2 остановлен; длительность 10.9 с

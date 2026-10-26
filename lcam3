@@ -1,0 +1,7 @@
+"""Запускает отдельный прототип компенсации движения из меню настроек."""
+
+from scripts.motion_trial import main
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

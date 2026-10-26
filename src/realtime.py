@@ -30,6 +30,15 @@ class InferenceSnapshot:
     detections: tuple[Detection, ...] = ()
 
 
+@dataclass(frozen=True)
+class ValueSnapshot:
+    """Последний результат лёгкого фонового этапа без привязки к типу данных."""
+
+    sequence: int = 0
+    completed_at: float = 0.0
+    value: Any | None = None
+
+
 class SystemStatusMonitor:
     """Показывает температуру и фактическую загрузку CPU без внешних библиотек."""
 
@@ -198,4 +207,70 @@ class LatestInferenceWorker:
         """Просит поток завершиться и кратко ожидает окончания инференса."""
         self._stop_requested.set()
         self._frame_ready.set()
+        self._thread.join(timeout=2.0)
+
+
+class LatestValueWorker:
+    """Выполняет лёгкий этап в фоне, оставляя только самый свежий вход и результат."""
+
+    def __init__(self, process: Callable[[Any], Any], name: str = "latest-value-worker") -> None:
+        """Запускает один рабочий поток для переданной функции без очереди кадров."""
+        self._process = process
+        self._lock = threading.Lock()
+        self._input_ready = threading.Event()
+        self._stop_requested = threading.Event()
+        self._pending_value: Any | None = None
+        self._snapshot = ValueSnapshot()
+        self._error: RuntimeError | None = None
+        self._thread = threading.Thread(target=self._run, name=name, daemon=True)
+        self._thread.start()
+
+    def submit(self, value: Any) -> None:
+        """Заменяет ожидающее значение более свежим, не создавая задержку очередью."""
+        with self._lock:
+            self._pending_value = value
+            self._input_ready.set()
+
+    def latest(self) -> ValueSnapshot:
+        """Возвращает последний готовый результат или передаёт ошибку обработчика."""
+        with self._lock:
+            if self._error is not None:
+                raise self._error
+            return self._snapshot
+
+    def _take_pending_value(self) -> Any | None:
+        """Забирает один самый свежий вход, очищая сигнал при отсутствии работы."""
+        with self._lock:
+            value = self._pending_value
+            self._pending_value = None
+            if value is None:
+                self._input_ready.clear()
+            return value
+
+    def _run(self) -> None:
+        """Последовательно запускает функцию, отбрасывая устаревшие входы между циклами."""
+        while not self._stop_requested.is_set():
+            if not self._input_ready.wait(0.1):
+                continue
+            value = self._take_pending_value()
+            if value is None:
+                continue
+            try:
+                result = self._process(value)
+            except Exception as error:  # noqa: BLE001 — ошибка нужна главному циклу.
+                with self._lock:
+                    self._error = RuntimeError(f"Ошибка фонового быстрого анализа: {error}")
+                self._stop_requested.set()
+                return
+            with self._lock:
+                self._snapshot = ValueSnapshot(
+                    sequence=self._snapshot.sequence + 1,
+                    completed_at=time.monotonic(),
+                    value=result,
+                )
+
+    def close(self) -> None:
+        """Останавливает работника и кратко ожидает завершения текущего вычисления."""
+        self._stop_requested.set()
+        self._input_ready.set()
         self._thread.join(timeout=2.0)
