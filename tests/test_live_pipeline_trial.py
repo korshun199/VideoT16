@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 import tempfile
 import threading
@@ -10,13 +11,16 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+import cv2
 import numpy as np
 
 from scripts.live_pipeline_trial import (
     CameraCaptureWorker,
     DelayedOverlaySelector,
+    FastScanPlanner,
     _camera_source,
     compose_frame,
+    configure_capture,
     load_profile,
     validate_profile,
 )
@@ -39,6 +43,10 @@ class LivePipelineTrialTests(unittest.TestCase):
         self.assertEqual(profile.pipeline["output_buffer_max_mb"], 512)
         self.assertEqual(profile.pipeline["box_hold_ms"], 1000)
         self.assertEqual(profile.pipeline["max_match_distance_fraction"], 0.25)
+        self.assertEqual(profile.capture["pixel_format"], "YUYV")
+        self.assertFalse(profile.fast_scan["enabled"])
+        self.assertEqual(profile.fast_scan["focus_crop_width"], 640)
+        self.assertEqual(profile.fast_scan["focus_lost_after_results"], 3)
         self.assertEqual(profile.threads, 8)
         self.assertNotIn("tracking_scale", profile.pipeline)
         self.assertNotIn("tracking_max_age_frames", profile.pipeline)
@@ -64,8 +72,80 @@ class LivePipelineTrialTests(unittest.TestCase):
         self.assertEqual(profile.source, 0)
         self.assertEqual(profile.pipeline["submission_interval_frames"], 1)
         self.assertEqual(profile.pipeline["display_fps"], 60)
+        self.assertEqual(profile.capture["pixel_format"], "YUYV")
+        self.assertFalse(profile.fast_scan["enabled"])
         self.assertEqual(profile.threads, 2)
         validate_profile(profile)
+
+    def test_fast_scan_cycles_one_tile_at_a_time_before_candidate(self) -> None:
+        """До кандидата быстрый режим не запускает весь набор плиток за один ответ."""
+        planner = FastScanPlanner(
+            {
+                "enabled": True,
+                "focus_min_confidence": 0.15,
+                "focus_crop_width": 640,
+                "focus_crop_height": 640,
+                "focus_lost_after_results": 3,
+            },
+            tile_size=640,
+            tile_overlap=0.20,
+        )
+        frame = np.zeros((960, 1280, 3), dtype=np.uint8)
+
+        crops = [planner.next_crop(frame) for _ in range(5)]
+
+        self.assertTrue(all(crop.mode == "SWEEP" for crop in crops))
+        self.assertEqual(len({(crop.x, crop.y) for crop in crops[:4]}), 4)
+        self.assertEqual((crops[0].x, crops[0].y), (crops[4].x, crops[4].y))
+
+    def test_fast_scan_focuses_on_confident_candidate_then_returns_to_sweep(self) -> None:
+        """Кандидат переводит следующий запрос в вырез, а три промаха сбрасывают вырез."""
+        planner = FastScanPlanner(
+            {
+                "enabled": True,
+                "focus_min_confidence": 0.15,
+                "focus_crop_width": 640,
+                "focus_crop_height": 640,
+                "focus_lost_after_results": 3,
+            },
+            tile_size=640,
+            tile_overlap=0.20,
+        )
+        frame = np.zeros((960, 1280, 3), dtype=np.uint8)
+        target = Detection(900, 200, 940, 240, "copter_drone", 0.76)
+
+        planner.observe((target,))
+        crop = planner.next_crop(frame)
+
+        self.assertEqual(crop.mode, "FOCUS")
+        self.assertEqual(crop.image.shape[:2], (640, 640))
+        self.assertLessEqual(crop.x, 920)
+        self.assertLess(920, crop.x + crop.image.shape[1])
+        self.assertLessEqual(crop.y, 220)
+        self.assertLess(220, crop.y + crop.image.shape[0])
+
+        planner.observe(())
+        planner.observe(())
+        self.assertEqual(planner.next_crop(frame).mode, "FOCUS")
+        planner.observe(())
+        self.assertEqual(planner.next_crop(frame).mode, "SWEEP")
+
+    def test_fast_scan_ignores_candidate_below_focus_threshold(self) -> None:
+        """Слабая рамка не удерживает вырез и не маскирует полный поиск."""
+        planner = FastScanPlanner(
+            {
+                "enabled": True,
+                "focus_min_confidence": 0.50,
+                "focus_crop_width": 640,
+                "focus_crop_height": 640,
+                "focus_lost_after_results": 3,
+            },
+            tile_size=640,
+            tile_overlap=0.20,
+        )
+        planner.observe((Detection(100, 100, 140, 140, "copter_drone", 0.49),))
+
+        self.assertEqual(planner.next_crop(np.zeros((960, 1280, 3), dtype=np.uint8)).mode, "SWEEP")
 
     def test_v2_rejects_invalid_pipeline_values_before_camera_open(self) -> None:
         """Ошибочные настройки потока отклоняются на этапе чтения профиля."""
@@ -75,6 +155,14 @@ class LivePipelineTrialTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "submission_interval_frames"):
             validate_profile(profile)
 
+    def test_v2_rejects_invalid_fast_scan_before_camera_open(self) -> None:
+        """Ошибка параметра быстрого поиска останавливает запуск до открытия камеры."""
+        profile = load_profile("sky")
+        profile.fast_scan["focus_lost_after_results"] = 0
+
+        with self.assertRaisesRegex(ValueError, "focus_lost_after_results"):
+            validate_profile(profile)
+
     def test_v2_rejects_invalid_display_rate_before_camera_open(self) -> None:
         """Непригодная частота окна отклоняется при чтении настроек."""
         profile = load_profile("sky")
@@ -82,6 +170,46 @@ class LivePipelineTrialTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "pipeline_v2.display_fps"):
             validate_profile(profile)
+
+    def test_v2_rejects_unknown_capture_pixel_format_before_camera_open(self) -> None:
+        """Неподдерживаемый FOURCC не должен доходить до V4L2-устройства."""
+        profile = load_profile("sky")
+        profile.capture["pixel_format"] = "H264"
+
+        with self.assertRaisesRegex(ValueError, "capture.pixel_format"):
+            validate_profile(profile)
+
+    def test_configure_capture_requests_profile_pixel_format_and_reports_driver_value(self) -> None:
+        """V2 задаёт MJPEG до разрешения/FPS и сообщает принятый FOURCC."""
+        class ConfigurableCapture:
+            """Запоминает настройки, которые мог бы принять V4L2-драйвер."""
+
+            def __init__(self) -> None:
+                """Создаёт фиктивный вход с возвращаемыми параметрами."""
+                self.values = {
+                    cv2.CAP_PROP_FRAME_WIDTH: 0.0,
+                    cv2.CAP_PROP_FRAME_HEIGHT: 0.0,
+                    cv2.CAP_PROP_FPS: 0.0,
+                    cv2.CAP_PROP_FOURCC: 0.0,
+                }
+
+            def set(self, property_id, value):
+                """Принимает одно свойство формата или буфера."""
+                self.values[property_id] = float(value)
+                return True
+
+            def get(self, property_id):
+                """Возвращает последнее заданное значение свойства."""
+                return self.values.get(property_id, 0.0)
+
+        capture = ConfigurableCapture()
+        actual = configure_capture(
+            capture,
+            {"pixel_format": "MJPG", "width": 1280, "height": 960, "fps": 60.0, "buffer_size": 1},
+            logging.getLogger("videot16.test.capture"),
+        )
+
+        self.assertEqual(actual, {"width": 1280, "height": 960, "fps": 60.0, "pixel_format": "MJPG"})
 
     def test_v2_rejects_output_buffer_smaller_than_delay_requires(self) -> None:
         """Настройка не запускает видео, если RAM-буфера не хватит на задержку."""
@@ -243,7 +371,10 @@ class LivePipelineTrialTests(unittest.TestCase):
         self.assertEqual(requests[0].source.sequence, packet.sequence)
         self.assertIs(requests[0].image, packet.bgr)
         self.assertEqual(hub.buffer_status()["newest_output_sequence"], packet.sequence)
-        self.assertEqual(camera.statistics()["submitted_sequence"], packet.sequence)
+        statistics = camera.statistics()
+        self.assertEqual(statistics["submitted_sequence"], packet.sequence)
+        self.assertEqual(statistics["capture_samples"], 1)
+        self.assertGreaterEqual(statistics["capture_read_p50_ms"], 0.0)
 
     def test_linux_by_id_camera_alias_resolves_to_video_node(self) -> None:
         """OpenCV получает конечный video-узел вместо ссылки /dev/v4l/by-id."""

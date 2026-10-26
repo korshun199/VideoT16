@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+# Сравнивает V4L2-форматы оцифровщика и не сохраняет кадры или видео.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/capture_probe.py" "$@"

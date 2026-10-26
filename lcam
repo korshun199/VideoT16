@@ -13,9 +13,13 @@ if [[ "${1:-}" == "--v2" ]]; then
     if [[ "$#" -eq 2 && "${2}" == "--run" ]]; then
         exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/live_pipeline_trial.py" --profile sky
     fi
+    if [[ "$#" -eq 3 && "${2}" == "--fast" && "${3}" == "--run" ]]; then
+        exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/live_pipeline_trial.py" --profile sky --fast
+    fi
     if [[ "$#" -ne 1 ]]; then
         echo "Окно настроек V2: ./lcam --v2"
         echo "Прямой запуск профиля: ./lcam --v2 --run"
+        echo "Быстрый поиск без сохранения: ./lcam --v2 --fast --run"
         exit 2
     fi
     exec "$ROOT/.venv/bin/python3" "$ROOT/config/editor.py" --config-file live_drone_profiles.json

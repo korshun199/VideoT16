@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import argparse
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 import json
 import logging
@@ -30,10 +30,12 @@ import cv2  # noqa: E402
 
 from scripts.compare_video_trials import (  # noqa: E402
     draw_overlay,
+    generate_tiles,
     infer_full_frame,
     infer_tiles,
     model_input_size,
 )
+from src.capture_diagnostics import RollingCaptureMetrics, coarse_frame_signature  # noqa: E402
 from src.live_pipeline import (  # noqa: E402
     DetectionSnapshot,
     FrameHub,
@@ -53,7 +55,24 @@ DEFAULT_PIPELINE = {
     "max_match_distance_fraction": 0.25,
 }
 
-DEFAULT_CAPTURE = {"width": 640, "height": 480, "fps": 30.0, "buffer_size": 1}
+# Быстрый поиск не заменяет обычный плиточный анализ. Он включается только
+# отдельной настройкой профиля и сокращает одну попытку YOLO до одного выреза.
+DEFAULT_FAST_SCAN = {
+    "enabled": False,
+    "focus_min_confidence": 0.15,
+    "focus_crop_width": 640,
+    "focus_crop_height": 640,
+    "focus_lost_after_results": 3,
+}
+
+SUPPORTED_PIXEL_FORMATS = ("MJPG", "YUYV")
+DEFAULT_CAPTURE = {
+    "pixel_format": "YUYV",
+    "width": 640,
+    "height": 480,
+    "fps": 30.0,
+    "buffer_size": 1,
+}
 DEFAULT_DISPLAY = {
     "window_title": "VideoT16 — V2 YOLO",
     "window_width": 1280,
@@ -108,7 +127,76 @@ class V2Profile:
     status_panel: dict[str, Any]
     overlay: dict[str, Any]
     pipeline: dict[str, Any]
+    fast_scan: dict[str, Any]
     console_status_interval_ms: int
+
+
+@dataclass(frozen=True)
+class ScanCrop:
+    """Один вырез исходного кадра для очередного вызова YOLO."""
+
+    image: Any
+    x: int
+    y: int
+    mode: str
+
+
+class FastScanPlanner:
+    """Чередует плитки до кандидата и быстро удерживает область кандидата.
+
+    Класс не является трекером и не подменяет цель: он лишь решает, какой
+    участок следующего свежего кадра отдать YOLO. Используется одним рабочим
+    потоком YOLO, поэтому отдельная синхронизация не требуется.
+    """
+
+    def __init__(self, settings: dict[str, Any], tile_size: int, tile_overlap: float) -> None:
+        """Сохраняет настраиваемые размеры поиска и состояние одной области."""
+        self._settings = settings
+        self._tile_size = tile_size
+        self._tile_overlap = tile_overlap
+        self._next_tile_index = 0
+        self._focus_center: tuple[float, float] | None = None
+        self._missed_results = 0
+
+    @property
+    def enabled(self) -> bool:
+        """Сообщает, разрешён ли ускоренный режим в текущем профиле."""
+        return bool(self._settings["enabled"])
+
+    def next_crop(self, frame: Any) -> ScanCrop:
+        """Возвращает одну плитку поиска либо увеличенный вырез вокруг кандидата."""
+        height, width = frame.shape[:2]
+        if self._focus_center is None:
+            tiles = generate_tiles(frame, self._tile_size, self._tile_overlap)
+            x, y, image = tiles[self._next_tile_index % len(tiles)]
+            self._next_tile_index += 1
+            return ScanCrop(image, x, y, "SWEEP")
+
+        crop_width = min(width, int(self._settings["focus_crop_width"]))
+        crop_height = min(height, int(self._settings["focus_crop_height"]))
+        center_x, center_y = self._focus_center
+        x = max(0, min(width - crop_width, round(center_x - crop_width / 2)))
+        y = max(0, min(height - crop_height, round(center_y - crop_height / 2)))
+        return ScanCrop(frame[y:y + crop_height, x:x + crop_width], x, y, "FOCUS")
+
+    def observe(self, detections: tuple[Detection, ...]) -> None:
+        """Обновляет область только по достаточно уверенному ответу YOLO."""
+        eligible = [
+            detection
+            for detection in detections
+            if detection.confidence >= float(self._settings["focus_min_confidence"])
+        ]
+        if eligible:
+            best = max(eligible, key=lambda detection: detection.confidence)
+            self._focus_center = ((best.x1 + best.x2) / 2, (best.y1 + best.y2) / 2)
+            self._missed_results = 0
+            return
+        if self._focus_center is None:
+            return
+        self._missed_results += 1
+        if self._missed_results >= int(self._settings["focus_lost_after_results"]):
+            self._focus_center = None
+            self._missed_results = 0
 
 
 @dataclass(frozen=True)
@@ -267,6 +355,7 @@ class CameraCaptureWorker:
         self._enabled = enabled
         self._stop_requested = threading.Event()
         self._stats_lock = threading.Lock()
+        self._capture_metrics = RollingCaptureMetrics()
         self._submitted_sequence = 0
         self._submitted_count = 0
         self._thread = threading.Thread(
@@ -280,12 +369,19 @@ class CameraCaptureWorker:
         """Непрерывно считывает камеру и отправляет только свежие кадры в hub."""
         try:
             while not self._stop_requested.is_set():
+                read_started_ns = time.monotonic_ns()
                 ok, frame = self._capture.read()
+                read_finished_ns = time.monotonic_ns()
                 if not ok or frame is None:
                     if self._stop_requested.is_set():
                         break
                     raise RuntimeError("Камера не вернула кадр")
-                captured_at_ns = time.monotonic_ns()
+                self._capture_metrics.add(
+                    read_started_ns,
+                    read_finished_ns,
+                    coarse_frame_signature(frame),
+                )
+                captured_at_ns = read_finished_ns
                 packet = self._hub.publish(frame, None, captured_at_ns=captured_at_ns)
                 if (
                     self._enabled.is_set()
@@ -311,13 +407,24 @@ class CameraCaptureWorker:
         self._capture.release()
         self._thread.join(timeout=2.0)
 
-    def statistics(self) -> dict[str, int]:
-        """Возвращает ID и число кадров, помещённых в буфер распознавания."""
+    def statistics(self) -> dict[str, int | float]:
+        """Возвращает ID, mailbox и недавнюю телеметрию реального захвата."""
         with self._stats_lock:
-            return {
+            statistics = {
                 "submitted_sequence": self._submitted_sequence,
                 "submitted_count": self._submitted_count,
             }
+        telemetry = self._capture_metrics.snapshot()
+        return {
+            **statistics,
+            "capture_samples": telemetry.samples,
+            "capture_observed_fps": telemetry.observed_fps,
+            "capture_read_p50_ms": telemetry.read_p50_ms,
+            "capture_read_p90_ms": telemetry.read_p90_ms,
+            "capture_interval_p50_ms": telemetry.interval_p50_ms,
+            "capture_interval_p90_ms": telemetry.interval_p90_ms,
+            "capture_coarse_same_percent": telemetry.coarse_same_percent,
+        }
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -327,6 +434,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--profile", default="sky", help="имя профиля из config/live_drone_profiles.json")
     parser.add_argument("--log", type=Path, help="необязательный путь журнала")
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="временно включить быстрый плиточно-фокусный поиск без сохранения конфигурации",
+    )
     return parser
 
 
@@ -388,6 +500,7 @@ def load_profile(profile_name: str, profiles_path: Path | None = None) -> V2Prof
         status_panel=_merge(DEFAULT_STATUS_PANEL, profile.get("status_panel")),
         overlay=_merge(DEFAULT_OVERLAY, profile.get("overlay")),
         pipeline=profile_v2,
+        fast_scan=_merge(DEFAULT_FAST_SCAN, profile.get("fast_scan")),
         console_status_interval_ms=int(diagnostics.get("console_status_interval_ms", 1000)),
     )
 
@@ -407,6 +520,9 @@ def validate_profile(profile: V2Profile) -> None:
     for key in ("width", "height"):
         if not isinstance(profile.capture[key], int) or profile.capture[key] < 32:
             raise ValueError(f"capture.{key} должен быть целым числом не меньше 32")
+    if profile.capture["pixel_format"] not in SUPPORTED_PIXEL_FORMATS:
+        available = ", ".join(SUPPORTED_PIXEL_FORMATS)
+        raise ValueError(f"capture.pixel_format: доступны {available}")
     if not isinstance(profile.capture["fps"], (int, float)) or profile.capture["fps"] <= 0:
         raise ValueError("capture.fps должен быть больше 0")
     if not isinstance(profile.capture["buffer_size"], int) or profile.capture["buffer_size"] < 1:
@@ -438,6 +554,16 @@ def validate_profile(profile: V2Profile) -> None:
             "pipeline_v2.output_buffer_max_mb недостаточен для заданных capture и output_delay_ms "
             f"(нужно не менее {math.ceil(required_buffer_bytes / 1024 / 1024)} МиБ)"
         )
+    fast_scan = profile.fast_scan
+    if not isinstance(fast_scan["enabled"], bool):
+        raise ValueError("fast_scan.enabled должен быть true или false")
+    if not isinstance(fast_scan["focus_min_confidence"], (int, float)) or not 0.0 < fast_scan["focus_min_confidence"] <= 1.0:
+        raise ValueError("fast_scan.focus_min_confidence должен быть в диапазоне (0, 1]")
+    for key in ("focus_crop_width", "focus_crop_height"):
+        if not isinstance(fast_scan[key], int) or fast_scan[key] < 32:
+            raise ValueError(f"fast_scan.{key} должен быть целым числом не меньше 32")
+    if not isinstance(fast_scan["focus_lost_after_results"], int) or not 1 <= fast_scan["focus_lost_after_results"] <= 120:
+        raise ValueError("fast_scan.focus_lost_after_results должен быть от 1 до 120")
     panel = profile.status_panel
     if not isinstance(panel["height"], int) or panel["height"] < 1:
         raise ValueError("status_panel.height должен быть положительным целым числом")
@@ -497,9 +623,16 @@ def close_logger(logger: logging.Logger) -> None:
         handler.close()
 
 
-def configure_capture(capture: Any, settings: dict[str, Any], logger: logging.Logger) -> dict[str, float | int]:
+def configure_capture(capture: Any, settings: dict[str, Any], logger: logging.Logger) -> dict[str, float | int | str]:
     """Запрашивает параметры V4L2 и записывает фактически принятый режим."""
+    pixel_format = str(settings["pixel_format"])
     capture.set(cv2.CAP_PROP_BUFFERSIZE, settings["buffer_size"])
+    accepted_format = capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*pixel_format))
+    logger.info(
+        "Запрос захвата формат=%s: %s",
+        pixel_format,
+        "принят" if accepted_format else "не подтверждён",
+    )
     for title, property_id, requested in (
         ("ширина", cv2.CAP_PROP_FRAME_WIDTH, settings["width"]),
         ("высота", cv2.CAP_PROP_FRAME_HEIGHT, settings["height"]),
@@ -511,8 +644,12 @@ def configure_capture(capture: Any, settings: dict[str, Any], logger: logging.Lo
         "width": int(round(capture.get(cv2.CAP_PROP_FRAME_WIDTH))),
         "height": int(round(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))),
         "fps": float(capture.get(cv2.CAP_PROP_FPS)),
+        "pixel_format": _fourcc_name(capture.get(cv2.CAP_PROP_FOURCC)),
     }
-    logger.info("Фактический захват: %(width)sx%(height)s @ %(fps).1f FPS", actual)
+    logger.info(
+        "Фактический захват: %(width)sx%(height)s @ %(fps).1f FPS %(pixel_format)s",
+        actual,
+    )
     return actual
 
 
@@ -521,6 +658,13 @@ def _font(name: object) -> int:
     if not isinstance(name, str) or not hasattr(cv2, name):
         raise ValueError(f"Неизвестный шрифт OpenCV: {name}")
     return int(getattr(cv2, name))
+
+
+def _fourcc_name(value: float) -> str:
+    """Преобразует числовой FOURCC OpenCV в читаемое имя формата V4L2."""
+    code = int(round(value))
+    text = "".join(chr((code >> (8 * index)) & 0xFF) for index in range(4))
+    return text if text.isprintable() else f"0x{code:08X}"
 
 
 def _bgr(rgb: object) -> tuple[int, int, int]:
@@ -673,9 +817,29 @@ def run(profile: V2Profile, logger: logging.Logger) -> int:
     history_size = max(96, math.ceil((output_delay_ms + 2000) * capture_actual["fps"] / 1000) + 4)
     hub = FrameHub(history_size, output_buffer_max_bytes)
     status_monitor = SystemStatusMonitor(interval=1.0)
+    fast_scan = FastScanPlanner(profile.fast_scan, profile.tile_size, profile.tile_overlap)
 
     def predict(request: InferenceRequest):
-        """Запускает полный или плиточный YOLO для кадра, связанного с запросом."""
+        """Запускает один из явно выбранных режимов YOLO для свежего кадра."""
+        if fast_scan.enabled:
+            crop = fast_scan.next_crop(request.image)
+            crop_detections = tuple(detector(crop.image))
+            height, width = request.image.shape[:2]
+            detections = tuple(
+                Detection(
+                    max(0, min(width, detection.x1 + crop.x)),
+                    max(0, min(height, detection.y1 + crop.y)),
+                    max(0, min(width, detection.x2 + crop.x)),
+                    max(0, min(height, detection.y2 + crop.y)),
+                    detection.name,
+                    detection.confidence,
+                )
+                for detection in crop_detections
+                if detection.x2 > detection.x1 and detection.y2 > detection.y1
+            )
+            fast_scan.observe(detections)
+            confidence = float(getattr(detector, "last_best_confidence", 0.0))
+            return detections, confidence
         if profile.full_frame:
             detections, _, confidence = infer_full_frame(detector, request.image)
         else:
@@ -700,7 +864,7 @@ def run(profile: V2Profile, logger: logging.Logger) -> int:
         cv2.namedWindow(profile.display["window_title"], cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
         cv2.resizeWindow(profile.display["window_title"], profile.display["window_width"], profile.display["window_height"])
         logger.info(
-            "V2 single YOLO window: profile=%s | model=%s | input=%s | source=%s | capture=%sx%s@%.1f | ORT threads=%s",
+            "V2 single YOLO window: profile=%s | model=%s | input=%s | source=%s | capture=%sx%s@%.1f %s | ORT threads=%s",
             profile.name,
             profile.model,
             model_size,
@@ -708,7 +872,25 @@ def run(profile: V2Profile, logger: logging.Logger) -> int:
             capture_actual["width"],
             capture_actual["height"],
             capture_actual["fps"],
+            capture_actual["pixel_format"],
             profile.threads,
+        )
+        scan_details = (
+            " | плитка=%s, фокус=%sx%s, кандидат от %.0f%%, сброс после %s ответов"
+            % (
+                profile.tile_size,
+                profile.fast_scan["focus_crop_width"],
+                profile.fast_scan["focus_crop_height"],
+                float(profile.fast_scan["focus_min_confidence"]) * 100,
+                profile.fast_scan["focus_lost_after_results"],
+            )
+            if fast_scan.enabled
+            else ""
+        )
+        logger.info(
+            "YOLO-режим: %s%s",
+            "быстрый sweep/focus" if fast_scan.enabled else ("полный кадр" if profile.full_frame else "полный плиточный"),
+            scan_details,
         )
         logger.info(
             "Три этапа: capture-buffer → YOLO-result-buffer → delayed-display | задержка=%dms | буфер до %dMiB | FPS окна=%s | box-hold=%dms",
@@ -791,8 +973,10 @@ def run(profile: V2Profile, logger: logging.Logger) -> int:
                 )
                 if result is None:
                     logger.info(
-                        "STAGES cap=%s@%.1f framebuf=%s(%d,%dMiB) | infer_in=%s/%d infer_out=WAITING | display=%d skip=%d overlay=-:NONE | fps=%.1f",
-                        frame_buffers["latest_sequence"], capture_fps, output_span, frame_buffers["output_frames"],
+                        "STAGES cap=%s@%.1f read=%.1f/%.1fms gap=%.1f/%.1fms same=%.0f%% framebuf=%s(%d,%dMiB) | infer_in=%s/%d infer_out=WAITING | display=%d skip=%d overlay=-:NONE | fps=%.1f",
+                        frame_buffers["latest_sequence"], capture_fps, inference_input["capture_read_p50_ms"],
+                        inference_input["capture_read_p90_ms"], inference_input["capture_interval_p50_ms"],
+                        inference_input["capture_interval_p90_ms"], inference_input["capture_coarse_same_percent"], output_span, frame_buffers["output_frames"],
                         frame_buffers["output_bytes"] // (1024 * 1024), inference_input["submitted_sequence"],
                         inference_input["submitted_count"], packet.sequence, display_gap, fps,
                     )
@@ -804,8 +988,10 @@ def run(profile: V2Profile, logger: logging.Logger) -> int:
                     )
                     overlay_age = selection.age_ms if selection.age_ms is not None else -1
                     logger.info(
-                        "STAGES cap=%s@%.1f framebuf=%s(%d,%dMiB) | infer_in=%s/%d overwrite=%d | infer_out=%d det=%d pass=%d raw=%.0f%% q=%.0fms yolo=%.0fms | display=%d skip=%d overlay=%s:%s boxes=%d bage=%.0fms | fps=%.1f",
-                        frame_buffers["latest_sequence"], capture_fps, output_span, frame_buffers["output_frames"],
+                        "STAGES cap=%s@%.1f read=%.1f/%.1fms gap=%.1f/%.1fms same=%.0f%% framebuf=%s(%d,%dMiB) | infer_in=%s/%d overwrite=%d | infer_out=%d det=%d pass=%d raw=%.0f%% q=%.0fms yolo=%.0fms | display=%d skip=%d overlay=%s:%s boxes=%d bage=%.0fms | fps=%.1f",
+                        frame_buffers["latest_sequence"], capture_fps, inference_input["capture_read_p50_ms"],
+                        inference_input["capture_read_p90_ms"], inference_input["capture_interval_p50_ms"],
+                        inference_input["capture_interval_p90_ms"], inference_input["capture_coarse_same_percent"], output_span, frame_buffers["output_frames"],
                         frame_buffers["output_bytes"] // (1024 * 1024), inference_input["submitted_sequence"],
                         inference_input["submitted_count"], inference_output["replaced"], result.source_sequence,
                         detection_count, eligible_count, result.raw_confidence * 100, result.queue_ms,
@@ -843,6 +1029,10 @@ def main(argv: list[str] | None = None) -> int:
     logger = make_logger(log_path)
     try:
         profile = load_profile(args.profile)
+        if args.fast:
+            fast_scan = dict(profile.fast_scan)
+            fast_scan["enabled"] = True
+            profile = replace(profile, fast_scan=fast_scan)
         validate_profile(profile)
         logger.info("=== VideoT16 V2 live YOLO ===")
         logger.info("Журнал: %s", log_path)

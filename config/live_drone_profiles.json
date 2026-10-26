@@ -6,7 +6,7 @@
       "settings": {
         "source": "/dev/v4l/by-id/usb-UltraSemi_USB3_Video_73908951-video-index0",
         "model": "models/anti_uav_fast_320_int8_pc.onnx",
-        "confidence": 0.4,
+        "confidence": 0.32,
         "min_confidence": 0.05,
         "tile_size": 640,
         "tile_overlap": 0.2,
@@ -14,6 +14,7 @@
         "full_frame": false
       },
       "capture": {
+        "pixel_format": "YUYV",
         "width": 1280,
         "height": 960,
         "fps": 60,
@@ -39,6 +40,13 @@
         "output_buffer_max_mb": 512,
         "box_hold_ms": 1000,
         "max_match_distance_fraction": 0.25
+      },
+      "fast_scan": {
+        "enabled": false,
+        "focus_min_confidence": 0.15,
+        "focus_crop_width": 640,
+        "focus_crop_height": 640,
+        "focus_lost_after_results": 3
       },
       "two_stage": {
         "enabled": true,
@@ -72,12 +80,20 @@
       },
       "overlay": {
         "near_threshold_margin": 0.1,
-        "near_threshold_color_rgb": [255, 165, 0],
+        "near_threshold_color_rgb": [
+          255,
+          165,
+          0
+        ],
         "box": {
           "scale_x": 1.0,
           "scale_y": 1.0,
           "thickness": 1,
-          "color_rgb": [80, 230, 40]
+          "color_rgb": [
+            80,
+            230,
+            40
+          ]
         },
         "label": {
           "font": "FONT_HERSHEY_SIMPLEX",
@@ -85,18 +101,30 @@
           "thickness": 1,
           "offset_y": 7,
           "min_y": 18,
-          "color_rgb": [80, 230, 40]
+          "color_rgb": [
+            80,
+            230,
+            40
+          ]
         }
       },
       "status_panel": {
         "position": "bottom",
         "height": 28,
-        "background_color_rgb": [35, 35, 35],
+        "background_color_rgb": [
+          35,
+          35,
+          35
+        ],
         "left": 12,
         "text_y": 19,
         "font": "FONT_HERSHEY_SIMPLEX",
         "font_scale": 0.42,
-        "text_color_rgb": [230, 230, 230],
+        "text_color_rgb": [
+          230,
+          230,
+          230
+        ],
         "thickness": 1,
         "max_text_chars": 96
       },
