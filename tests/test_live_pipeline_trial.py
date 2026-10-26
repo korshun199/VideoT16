@@ -35,8 +35,8 @@ class LivePipelineTrialTests(unittest.TestCase):
         self.assertEqual(profile.model, project_root / "models/anti_uav_fast_320_int8_pc.onnx")
         self.assertEqual(profile.source, "/dev/v4l/by-id/usb-UltraSemi_USB3_Video_73908951-video-index0")
         self.assertEqual(profile.pipeline["display_fps"], 60)
-        self.assertEqual(profile.pipeline["output_delay_ms"], 1200)
-        self.assertEqual(profile.pipeline["output_buffer_max_mb"], 384)
+        self.assertEqual(profile.pipeline["output_delay_ms"], 2200)
+        self.assertEqual(profile.pipeline["output_buffer_max_mb"], 512)
         self.assertEqual(profile.pipeline["box_hold_ms"], 1000)
         self.assertEqual(profile.threads, 8)
         self.assertNotIn("tracking_scale", profile.pipeline)
@@ -127,8 +127,8 @@ class LivePipelineTrialTests(unittest.TestCase):
             np.array([10, 20, 30], dtype=np.uint8),
         )
 
-    def test_yolo_box_is_held_then_expires_without_optical_tracker(self) -> None:
-        """Рамка не теряется трекером, удерживается и затем гаснет по возрасту."""
+    def test_empty_yolo_result_clears_previous_box(self) -> None:
+        """Новый результат без уверенных рамок не оставляет устаревшие координаты."""
         hub = FrameHub(output_buffer_max_bytes=1_000_000)
         first = hub.publish(np.zeros((8, 8, 3), dtype=np.uint8), None, captured_at_ns=1_000_000_000)
         second = hub.publish(np.zeros((8, 8, 3), dtype=np.uint8), None, captured_at_ns=1_050_000_000)
@@ -149,17 +149,53 @@ class LivePipelineTrialTests(unittest.TestCase):
             )
 
         selector = DelayedOverlaySelector(100)
-        first_selection = selector.select(first, snapshot(first, (detection,)), 0.4, 0.1)
-        held_selection = selector.select(second, snapshot(second, ()), 0.4, 0.1)
-        expired_selection = selector.select(expired, None, 0.4, 0.1)
+        first_selection = selector.select(first, snapshot(first, (detection,)), None, 0.4, 0.1)
+        held_selection = selector.select(second, snapshot(second, ()), None, 0.4, 0.1)
+        expired_selection = selector.select(expired, None, None, 0.4, 0.1)
 
         self.assertEqual(first_selection.mode, "YOLO")
         self.assertEqual(first_selection.source_sequence, first.sequence)
-        self.assertEqual(held_selection.mode, "HOLD")
-        self.assertEqual(held_selection.source_sequence, first.sequence)
-        self.assertEqual(held_selection.detections, (detection,))
-        self.assertEqual(expired_selection.mode, "EXPIRED")
+        self.assertEqual(held_selection.mode, "NONE")
+        self.assertEqual(held_selection.detections, ())
+        self.assertEqual(expired_selection.mode, "NONE")
         self.assertEqual(expired_selection.detections, ())
+
+    def test_interpolates_box_to_displayed_frame_between_yolo_results(self) -> None:
+        """Рамка перемещается к ID показываемого кадра между результатами YOLO."""
+        hub = FrameHub(output_buffer_max_bytes=1_000_000)
+        first = hub.publish(np.zeros((100, 100, 3), dtype=np.uint8), None, captured_at_ns=1_000_000_000)
+        middle = hub.publish(np.zeros((100, 100, 3), dtype=np.uint8), None, captured_at_ns=1_050_000_000)
+        last = hub.publish(np.zeros((100, 100, 3), dtype=np.uint8), None, captured_at_ns=1_100_000_000)
+
+        def snapshot(packet, detection):
+            """Строит результат с кадром-источником для проверки линейного движения."""
+            return DetectionSnapshot(
+                source_sequence=packet.sequence,
+                source_captured_at_ns=packet.captured_at_ns,
+                submitted_at_ns=packet.captured_at_ns,
+                started_at_ns=packet.captured_at_ns,
+                finished_at_ns=packet.captured_at_ns + 1,
+                mode="full_scan",
+                detections=(detection,),
+                raw_confidence=detection.confidence,
+            )
+
+        earlier = snapshot(first, Detection(10, 20, 30, 40, "drone", 0.8))
+        later = snapshot(last, Detection(30, 40, 50, 60, "drone", 0.9))
+        selection = DelayedOverlaySelector(100).select(middle, earlier, later, 0.4, 0.1)
+
+        self.assertEqual(selection.mode, "INTERPOLATED")
+        self.assertEqual(selection.source_sequence, middle.sequence)
+        self.assertEqual(selection.source_sequence_end, last.sequence)
+        self.assertEqual(len(selection.detections), 1)
+        self.assertEqual((
+            selection.detections[0].x1,
+            selection.detections[0].y1,
+            selection.detections[0].x2,
+            selection.detections[0].y2,
+            selection.detections[0].name,
+        ), (20, 30, 40, 50, "drone"))
+        self.assertAlmostEqual(selection.detections[0].confidence, 0.85)
 
     def test_capture_stage_fills_frame_and_inference_buffers_together(self) -> None:
         """Первый из трёх рабочих потоков пишет кадр в оба буфера с одним ID."""

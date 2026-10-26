@@ -340,6 +340,24 @@ class LatestDetectionWorker:
                 None,
             )
 
+    def snapshots_around(
+        self,
+        sequence: int,
+    ) -> tuple[DetectionSnapshot | None, DetectionSnapshot | None]:
+        """Возвращает ближайшие результаты YOLO до и после указанного кадра."""
+        with self._lock:
+            if self._error is not None:
+                raise self._error
+            before = None
+            after = None
+            for item in self._history:
+                if item.source_sequence <= sequence:
+                    before = item
+                elif after is None:
+                    after = item
+                    break
+            return before, after
+
     def _take_pending(self) -> InferenceRequest | None:
         """Забирает единственное актуальное задание из mailbox."""
         with self._lock:

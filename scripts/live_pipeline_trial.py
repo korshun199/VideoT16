@@ -40,15 +40,15 @@ from src.live_pipeline import (  # noqa: E402
     InferenceRequest,
     LatestDetectionWorker,
 )
-from src.realtime import SystemStatusMonitor  # noqa: E402
+from src.realtime import Detection, SystemStatusMonitor  # noqa: E402
 
 
 DEFAULT_PIPELINE = {
     "threads": 2,
     "submission_interval_frames": 1,
     "display_fps": 60,
-    "output_delay_ms": 1200,
-    "output_buffer_max_mb": 384,
+    "output_delay_ms": 2200,
+    "output_buffer_max_mb": 512,
     "box_hold_ms": 1000,
 }
 
@@ -76,6 +76,7 @@ DEFAULT_STATUS_PANEL = {
 }
 DEFAULT_OVERLAY = {
     "near_threshold_margin": 0.10,
+    "max_match_distance_fraction": 0.25,
     "near_threshold_color_rgb": [255, 165, 0],
     "box": {"scale_x": 1.0, "scale_y": 1.0, "thickness": 1, "color_rgb": [80, 230, 40]},
     "label": {
@@ -119,10 +120,11 @@ class DisplayOverlaySelection:
     age_ms: float | None
     mode: str
     latest_result: DetectionSnapshot | None
+    source_sequence_end: int | None = None
 
 
 class DelayedOverlaySelector:
-    """Выбирает свежую рамку YOLO и удерживает её без оптического трекера."""
+    """Сводит рамку к ID выводимого кадра по двум соседним ответам YOLO."""
 
     def __init__(self, hold_ms: int) -> None:
         """Создаёт ограниченное по времени состояние рамки отображения."""
@@ -142,21 +144,51 @@ class DelayedOverlaySelector:
     def select(
         self,
         frame: Any,
-        result: DetectionSnapshot | None,
+        before: DetectionSnapshot | None,
+        after: DetectionSnapshot | None,
         confidence_threshold: float,
         near_threshold_margin: float,
+        max_match_distance_fraction: float = 0.25,
     ) -> DisplayOverlaySelection:
-        """Сопоставляет кадр с результатом не из будущего и показывает режим."""
+        """Интерполирует рамки между соседними результатами, иначе кратко держит старую."""
+        result = before
         if result is not None and self._latest_seen_sequence < result.source_sequence <= frame.sequence:
             self._latest_seen_sequence = result.source_sequence
             self._latest_result = result
             minimum_confidence = max(0.0, confidence_threshold - near_threshold_margin)
-            visible = tuple(
-                detection for detection in result.detections
-                if detection.confidence >= minimum_confidence
-            )
-            if visible:
+            if any(item.confidence >= minimum_confidence for item in result.detections):
                 self._overlay_result = result
+            else:
+                # Новый ответ без допустимых объектов отменяет прежнюю рамку:
+                # иначе старые координаты переживают пропажу цели до box_hold_ms.
+                self._overlay_result = None
+
+        if before is not None and after is not None and before.source_sequence < frame.sequence < after.source_sequence:
+            interpolated = self._interpolate(
+                before,
+                after,
+                frame.sequence,
+                frame.bgr.shape[1],
+                frame.bgr.shape[0],
+                max(0.0, max_match_distance_fraction),
+                max(0.0, confidence_threshold - near_threshold_margin),
+            )
+            if interpolated:
+                return DisplayOverlaySelection(
+                    interpolated,
+                    frame.sequence,
+                    0.0,
+                    "INTERPOLATED",
+                    self._latest_result,
+                    after.source_sequence,
+                )
+
+        if before is not None and before.source_sequence == frame.sequence:
+            minimum_confidence = max(0.0, confidence_threshold - near_threshold_margin)
+            exact = tuple(item for item in before.detections if item.confidence >= minimum_confidence)
+            if exact:
+                self._overlay_result = before
+                return DisplayOverlaySelection(exact, frame.sequence, 0.0, "YOLO", self._latest_result)
 
         overlay = self._overlay_result
         if overlay is None or frame.captured_at_ns < overlay.source_captured_at_ns:
@@ -167,6 +199,53 @@ class DelayedOverlaySelector:
             return DisplayOverlaySelection((), overlay.source_sequence, age_ms, "EXPIRED", self._latest_result)
         mode = "YOLO" if overlay.source_sequence == frame.sequence else "HOLD"
         return DisplayOverlaySelection(overlay.detections, overlay.source_sequence, age_ms, mode, self._latest_result)
+
+    @staticmethod
+    def _interpolate(
+        before: DetectionSnapshot,
+        after: DetectionSnapshot,
+        sequence: int,
+        frame_width: int,
+        frame_height: int,
+        max_distance_fraction: float,
+        minimum_confidence: float,
+    ) -> tuple[Detection, ...]:
+        """Сопоставляет объекты одного класса по близости и линейно двигает рамку."""
+        left = [item for item in before.detections if item.confidence >= minimum_confidence]
+        right = [item for item in after.detections if item.confidence >= minimum_confidence]
+        if not left or not right:
+            return ()
+        ratio = (sequence - before.source_sequence) / (after.source_sequence - before.source_sequence)
+        maximum_distance = math.hypot(frame_width, frame_height) * max_distance_fraction
+        candidates = []
+        for left_index, first in enumerate(left):
+            first_center = ((first.x1 + first.x2) / 2, (first.y1 + first.y2) / 2)
+            for right_index, second in enumerate(right):
+                if first.name != second.name:
+                    continue
+                second_center = ((second.x1 + second.x2) / 2, (second.y1 + second.y2) / 2)
+                distance = math.hypot(first_center[0] - second_center[0], first_center[1] - second_center[1])
+                if distance <= maximum_distance:
+                    candidates.append((distance, left_index, right_index))
+        matched_left: set[int] = set()
+        matched_right: set[int] = set()
+        interpolated = []
+        for _, left_index, right_index in sorted(candidates):
+            if left_index in matched_left or right_index in matched_right:
+                continue
+            matched_left.add(left_index)
+            matched_right.add(right_index)
+            first = left[left_index]
+            second = right[right_index]
+            interpolated.append(Detection(
+                x1=round(first.x1 + (second.x1 - first.x1) * ratio),
+                y1=round(first.y1 + (second.y1 - first.y1) * ratio),
+                x2=round(first.x2 + (second.x2 - first.x2) * ratio),
+                y2=round(first.y2 + (second.y2 - first.y2) * ratio),
+                name=first.name,
+                confidence=first.confidence + (second.confidence - first.confidence) * ratio,
+            ))
+        return tuple(interpolated)
 
 
 class CameraCaptureWorker:
@@ -346,6 +425,9 @@ def validate_profile(profile: V2Profile) -> None:
         raise ValueError("pipeline_v2.output_buffer_max_mb должен быть от 64 до 2048")
     if not isinstance(pipeline["box_hold_ms"], int) or not 0 <= pipeline["box_hold_ms"] <= 5000:
         raise ValueError("pipeline_v2.box_hold_ms должен быть от 0 до 5000")
+    max_match_distance = profile.overlay["max_match_distance_fraction"]
+    if not isinstance(max_match_distance, (int, float)) or not 0.0 < max_match_distance <= 1.0:
+        raise ValueError("overlay.max_match_distance_fraction должен быть в диапазоне (0, 1]")
     requested_frame_bytes = int(profile.capture["width"]) * int(profile.capture["height"]) * 3
     required_buffer_bytes = math.ceil(
         requested_frame_bytes * float(profile.capture["fps"]) * int(pipeline["output_delay_ms"]) / 1000
@@ -635,7 +717,7 @@ def run(profile: V2Profile, logger: logging.Logger) -> int:
             profile.pipeline["display_fps"],
             profile.pipeline["box_hold_ms"],
         )
-        logger.info("Этап 1 сохраняет кадры; этап 2 распознаёт свежие ID; этап 3 выводит отложенный кадр с последней рамкой не из будущего.")
+        logger.info("Этап 1 сохраняет кадры; этап 2 распознаёт свежие ID; этап 3 привязывает рамку к ID выводимого кадра.")
         last_display_sequence = 0
         display_period = 1.0 / float(profile.pipeline["display_fps"])
         next_display_at = time.perf_counter()
@@ -652,13 +734,16 @@ def run(profile: V2Profile, logger: logging.Logger) -> int:
                 continue
             display_gap = max(0, packet.sequence - last_display_sequence - 1)
             last_display_sequence = packet.sequence
-            result = worker.latest_at_or_before(packet.sequence) if detection_enabled.is_set() else None
+            before, after = worker.snapshots_around(packet.sequence) if detection_enabled.is_set() else (None, None)
+            result = before
             if detection_enabled.is_set():
                 selection = overlay_selector.select(
                     packet,
-                    result,
+                    before,
+                    after,
                     profile.confidence,
                     float(profile.overlay["near_threshold_margin"]),
+                    float(profile.overlay["max_match_distance_fraction"]),
                 )
             else:
                 overlay_selector.clear(worker.statistics()["latest_result_sequence"] or 0)
@@ -712,7 +797,11 @@ def run(profile: V2Profile, logger: logging.Logger) -> int:
                         inference_input["submitted_count"], packet.sequence, display_gap, fps,
                     )
                 else:
-                    overlay_id = selection.source_sequence if selection.source_sequence is not None else "-"
+                    overlay_id = (
+                        f"{selection.source_sequence}-{selection.source_sequence_end}"
+                        if selection.source_sequence_end is not None
+                        else selection.source_sequence if selection.source_sequence is not None else "-"
+                    )
                     overlay_age = selection.age_ms if selection.age_ms is not None else -1
                     logger.info(
                         "STAGES cap=%s@%.1f framebuf=%s(%d,%dMiB) | infer_in=%s/%d overwrite=%d | infer_out=%d det=%d pass=%d raw=%.0f%% q=%.0fms yolo=%.0fms | display=%d skip=%d overlay=%s:%s boxes=%d bage=%.0fms | fps=%.1f",
