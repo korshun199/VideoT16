@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import tempfile
+import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -12,12 +13,15 @@ from unittest.mock import patch
 import numpy as np
 
 from scripts.live_pipeline_trial import (
+    CameraCaptureWorker,
+    DelayedOverlaySelector,
     _camera_source,
     compose_frame,
     load_profile,
-    prepare_analysis_frame,
     validate_profile,
 )
+from src.live_pipeline import DetectionSnapshot, FrameHub
+from src.realtime import Detection
 
 
 class LivePipelineTrialTests(unittest.TestCase):
@@ -31,7 +35,12 @@ class LivePipelineTrialTests(unittest.TestCase):
         self.assertEqual(profile.model, project_root / "models/anti_uav_fast_320_int8_pc.onnx")
         self.assertEqual(profile.source, "/dev/v4l/by-id/usb-UltraSemi_USB3_Video_73908951-video-index0")
         self.assertEqual(profile.pipeline["display_fps"], 60)
+        self.assertEqual(profile.pipeline["output_delay_ms"], 1200)
+        self.assertEqual(profile.pipeline["output_buffer_max_mb"], 384)
+        self.assertEqual(profile.pipeline["box_hold_ms"], 1000)
         self.assertEqual(profile.threads, 8)
+        self.assertNotIn("tracking_scale", profile.pipeline)
+        self.assertNotIn("tracking_max_age_frames", profile.pipeline)
         self.assertNotIn("display_tracker", profile.pipeline)
         self.assertNotIn("show_analysis_inset", profile.pipeline)
         validate_profile(profile)
@@ -73,8 +82,16 @@ class LivePipelineTrialTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "pipeline_v2.display_fps"):
             validate_profile(profile)
 
+    def test_v2_rejects_output_buffer_smaller_than_delay_requires(self) -> None:
+        """Настройка не запускает видео, если RAM-буфера не хватит на задержку."""
+        profile = load_profile("sky")
+        profile.pipeline["output_buffer_max_mb"] = 64
+
+        with self.assertRaisesRegex(ValueError, "нужно не менее"):
+            validate_profile(profile)
+
     def test_single_window_uses_live_frame_before_first_yolo_result(self) -> None:
-        """До первого результата окно показывает живой кадр камеры."""
+        """До первого результата окно показывает кадр из задержанного буфера без рамок."""
         profile = load_profile("sky")
         current_bgr = np.full((480, 640, 3), (10, 20, 30), dtype=np.uint8)
         packet = SimpleNamespace(sequence=123, bgr=current_bgr)
@@ -84,8 +101,8 @@ class LivePipelineTrialTests(unittest.TestCase):
         self.assertEqual(canvas.shape[:2], (expected_height, profile.display["window_width"]))
         np.testing.assert_array_equal(canvas[540, 740], np.array([10, 20, 30], dtype=np.uint8))
 
-    def test_yolo_source_frame_becomes_the_only_main_window(self) -> None:
-        """Главное окно показывает ровно исходный кадр с рамкой YOLO."""
+    def test_live_capture_frame_uses_latest_yolo_boxes(self) -> None:
+        """Плавный вывод берёт текущий кадр, а координаты рамок — из последнего ответа YOLO."""
         profile = load_profile("sky")
         analyzed_bgr = np.full((480, 640, 3), (70, 80, 90), dtype=np.uint8)
         current_bgr = np.full((480, 640, 3), (10, 20, 30), dtype=np.uint8)
@@ -99,17 +116,97 @@ class LivePipelineTrialTests(unittest.TestCase):
             source_captured_at_ns=0,
         )
 
-        with patch("scripts.live_pipeline_trial.draw_overlay", side_effect=lambda frame, *_args: frame.copy()) as draw:
-            analyzed_frame = prepare_analysis_frame(result, profile)
-
-        self.assertIs(draw.call_args.args[0], analyzed_bgr)
-        self.assertEqual(draw.call_args.args[1], (detection,))
         packet = SimpleNamespace(sequence=99, bgr=current_bgr)
-        canvas = compose_frame(packet, profile, "TEMP 40C CPU 25%", result, analyzed_frame)
+        with patch("scripts.live_pipeline_trial.draw_overlay", side_effect=lambda frame, *_args: frame.copy()) as draw:
+            canvas = compose_frame(packet, profile, "TEMP 40C CPU 25%", result)
+
+        self.assertIs(draw.call_args.args[0], current_bgr)
+        self.assertEqual(draw.call_args.args[1], (detection,))
         np.testing.assert_array_equal(
             canvas[540, 740],
-            np.array([70, 80, 90], dtype=np.uint8),
+            np.array([10, 20, 30], dtype=np.uint8),
         )
+
+    def test_yolo_box_is_held_then_expires_without_optical_tracker(self) -> None:
+        """Рамка не теряется трекером, удерживается и затем гаснет по возрасту."""
+        hub = FrameHub(output_buffer_max_bytes=1_000_000)
+        first = hub.publish(np.zeros((8, 8, 3), dtype=np.uint8), None, captured_at_ns=1_000_000_000)
+        second = hub.publish(np.zeros((8, 8, 3), dtype=np.uint8), None, captured_at_ns=1_050_000_000)
+        expired = hub.publish(np.zeros((8, 8, 3), dtype=np.uint8), None, captured_at_ns=1_150_000_001)
+        detection = Detection(1, 2, 5, 6, "copter_drone", 0.84)
+
+        def snapshot(packet, detections):
+            """Создаёт детерминированный результат YOLO с ID исходного кадра."""
+            return DetectionSnapshot(
+                source_sequence=packet.sequence,
+                source_captured_at_ns=packet.captured_at_ns,
+                submitted_at_ns=packet.captured_at_ns,
+                started_at_ns=packet.captured_at_ns,
+                finished_at_ns=packet.captured_at_ns + 1_000_000,
+                mode="full_scan",
+                detections=detections,
+                raw_confidence=max((item.confidence for item in detections), default=0.0),
+            )
+
+        selector = DelayedOverlaySelector(100)
+        first_selection = selector.select(first, snapshot(first, (detection,)), 0.4, 0.1)
+        held_selection = selector.select(second, snapshot(second, ()), 0.4, 0.1)
+        expired_selection = selector.select(expired, None, 0.4, 0.1)
+
+        self.assertEqual(first_selection.mode, "YOLO")
+        self.assertEqual(first_selection.source_sequence, first.sequence)
+        self.assertEqual(held_selection.mode, "HOLD")
+        self.assertEqual(held_selection.source_sequence, first.sequence)
+        self.assertEqual(held_selection.detections, (detection,))
+        self.assertEqual(expired_selection.mode, "EXPIRED")
+        self.assertEqual(expired_selection.detections, ())
+
+    def test_capture_stage_fills_frame_and_inference_buffers_together(self) -> None:
+        """Первый из трёх рабочих потоков пишет кадр в оба буфера с одним ID."""
+        hub = FrameHub(output_buffer_max_bytes=1_000_000)
+        submitted = threading.Event()
+        requests = []
+
+        class RequestRecorder:
+            """Запоминает запрос вместо реального запуска ONNX-модели."""
+
+            def submit(self, request):
+                requests.append(request)
+                submitted.set()
+
+        class OneFrameCapture:
+            """Отдаёт один искусственный кадр и ждёт закрытия устройства."""
+
+            def __init__(self):
+                self.released = threading.Event()
+                self.sent = False
+
+            def read(self):
+                if not self.sent:
+                    self.sent = True
+                    return True, np.zeros((8, 8, 3), dtype=np.uint8)
+                self.released.wait(timeout=1.0)
+                return False, None
+
+            def release(self):
+                self.released.set()
+
+        enabled = threading.Event()
+        enabled.set()
+        capture = OneFrameCapture()
+        camera = CameraCaptureWorker(capture, hub, RequestRecorder(), 1, enabled)
+        try:
+            self.assertTrue(submitted.wait(timeout=1.0))
+            packet = hub.latest()
+            self.assertIsNotNone(packet)
+            assert packet is not None
+        finally:
+            camera.close()
+
+        self.assertEqual(requests[0].source.sequence, packet.sequence)
+        self.assertIs(requests[0].image, packet.bgr)
+        self.assertEqual(hub.buffer_status()["newest_output_sequence"], packet.sequence)
+        self.assertEqual(camera.statistics()["submitted_sequence"], packet.sequence)
 
     def test_linux_by_id_camera_alias_resolves_to_video_node(self) -> None:
         """OpenCV получает конечный video-узел вместо ссылки /dev/v4l/by-id."""

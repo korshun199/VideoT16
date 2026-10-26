@@ -34,7 +34,10 @@
       "pipeline_v2": {
         "threads": 8,
         "submission_interval_frames": 1,
-        "display_fps": 60
+        "display_fps": 60,
+        "output_delay_ms": 1200,
+        "output_buffer_max_mb": 384,
+        "box_hold_ms": 1000
       },
       "two_stage": {
         "enabled": true,

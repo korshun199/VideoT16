@@ -16,7 +16,6 @@ from typing import Callable, Iterable
 
 import cv2
 import numpy as np
-import onnxruntime as ort
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -31,12 +30,13 @@ DEFAULT_MODELS = (
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.onnx_detector import OnnxDetector  # noqa: E402
 from src.realtime import Detection  # noqa: E402
 
 
 def model_input_size(model_path: Path) -> int:
     """Читает и проверяет квадратный размер входа ONNX-модели."""
+    import onnxruntime as ort
+
     options = ort.SessionOptions()
     options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
     session = ort.InferenceSession(
@@ -291,7 +291,12 @@ def compare_samples(
         raise FileExistsError(f"Каталог результата уже существует; перезапись запрещена: {output_dir}")
 
     read_size = input_size_reader or model_input_size
-    create_detector = detector_factory or OnnxDetector
+    if detector_factory is None:
+        from src.onnx_detector import OnnxDetector
+
+        create_detector = OnnxDetector
+    else:
+        create_detector = detector_factory
     overlay_style = overlay_style or load_overlay_settings()
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True)

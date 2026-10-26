@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Отдельный V2-стенд живого распознавания с точной привязкой рамки к кадру.
+"""V2: независимый захват и плавный задержанный вывод с сопровождением рамки.
 
 Стенд запускается через `./lcam --v2`, не открывает UART, J7 или OSD и не
-меняет штатный `./lcam`. Единственное окно показывает кадр, который обработала
-YOLO, чтобы рамка совпадала с изображением, а задержку можно было измерять.
+меняет штатный `./lcam`. Камера складывает кадры в ограниченный кольцевой
+буфер; окно проигрывает их с конфигурируемой задержкой, пока YOLO и оптический
+трекер работают параллельно.
 """
 
 from __future__ import annotations
@@ -34,11 +35,11 @@ from scripts.compare_video_trials import (  # noqa: E402
     model_input_size,
 )
 from src.live_pipeline import (  # noqa: E402
+    DetectionSnapshot,
     FrameHub,
     InferenceRequest,
     LatestDetectionWorker,
 )
-from src.onnx_detector import OnnxDetector  # noqa: E402
 from src.realtime import SystemStatusMonitor  # noqa: E402
 
 
@@ -46,6 +47,9 @@ DEFAULT_PIPELINE = {
     "threads": 2,
     "submission_interval_frames": 1,
     "display_fps": 60,
+    "output_delay_ms": 1200,
+    "output_buffer_max_mb": 384,
+    "box_hold_ms": 1000,
 }
 
 DEFAULT_CAPTURE = {"width": 640, "height": 480, "fps": 30.0, "buffer_size": 1}
@@ -106,14 +110,86 @@ class V2Profile:
     console_status_interval_ms: int
 
 
-class CameraCaptureWorker:
-    """Читает VideoCapture в отдельном потоке и публикует пронумерованные кадры."""
+@dataclass(frozen=True)
+class DisplayOverlaySelection:
+    """Рамка для конкретного выходного кадра и ID её кадра-источника."""
 
-    def __init__(self, capture: Any, hub: FrameHub) -> None:
-        """Создаёт поток захвата без неиспользуемой подготовки кадров трекера."""
+    detections: tuple[Any, ...]
+    source_sequence: int | None
+    age_ms: float | None
+    mode: str
+    latest_result: DetectionSnapshot | None
+
+
+class DelayedOverlaySelector:
+    """Выбирает свежую рамку YOLO и удерживает её без оптического трекера."""
+
+    def __init__(self, hold_ms: int) -> None:
+        """Создаёт ограниченное по времени состояние рамки отображения."""
+        if hold_ms < 0:
+            raise ValueError("box_hold_ms не может быть отрицательным")
+        self._hold_ns = hold_ms * 1_000_000
+        self._latest_seen_sequence = 0
+        self._latest_result: DetectionSnapshot | None = None
+        self._overlay_result: DetectionSnapshot | None = None
+
+    def clear(self, after_sequence: int = 0) -> None:
+        """Сбрасывает последнюю рамку после отключения распознавания."""
+        self._latest_seen_sequence = max(0, after_sequence)
+        self._latest_result = None
+        self._overlay_result = None
+
+    def select(
+        self,
+        frame: Any,
+        result: DetectionSnapshot | None,
+        confidence_threshold: float,
+        near_threshold_margin: float,
+    ) -> DisplayOverlaySelection:
+        """Сопоставляет кадр с результатом не из будущего и показывает режим."""
+        if result is not None and self._latest_seen_sequence < result.source_sequence <= frame.sequence:
+            self._latest_seen_sequence = result.source_sequence
+            self._latest_result = result
+            minimum_confidence = max(0.0, confidence_threshold - near_threshold_margin)
+            visible = tuple(
+                detection for detection in result.detections
+                if detection.confidence >= minimum_confidence
+            )
+            if visible:
+                self._overlay_result = result
+
+        overlay = self._overlay_result
+        if overlay is None or frame.captured_at_ns < overlay.source_captured_at_ns:
+            return DisplayOverlaySelection((), None, None, "NONE", self._latest_result)
+        age_ms = (frame.captured_at_ns - overlay.source_captured_at_ns) / 1_000_000
+        if age_ms * 1_000_000 > self._hold_ns:
+            self._overlay_result = None
+            return DisplayOverlaySelection((), overlay.source_sequence, age_ms, "EXPIRED", self._latest_result)
+        mode = "YOLO" if overlay.source_sequence == frame.sequence else "HOLD"
+        return DisplayOverlaySelection(overlay.detections, overlay.source_sequence, age_ms, mode, self._latest_result)
+
+
+class CameraCaptureWorker:
+    """Считывает кадры и публикует их сразу в видеобуфер и mailbox YOLO."""
+
+    def __init__(
+        self,
+        capture: Any,
+        hub: FrameHub,
+        worker: LatestDetectionWorker,
+        submission_interval_frames: int,
+        enabled: threading.Event,
+    ) -> None:
+        """Создаёт первый этап и отправляет каждый разрешённый кадр в YOLO-mailbox."""
         self._capture = capture
         self._hub = hub
+        self._worker = worker
+        self._submission_interval_frames = submission_interval_frames
+        self._enabled = enabled
         self._stop_requested = threading.Event()
+        self._stats_lock = threading.Lock()
+        self._submitted_sequence = 0
+        self._submitted_count = 0
         self._thread = threading.Thread(
             target=self._run,
             name="v2-camera-capture",
@@ -127,8 +203,26 @@ class CameraCaptureWorker:
             while not self._stop_requested.is_set():
                 ok, frame = self._capture.read()
                 if not ok or frame is None:
+                    if self._stop_requested.is_set():
+                        break
                     raise RuntimeError("Камера не вернула кадр")
-                self._hub.publish(frame, None)
+                captured_at_ns = time.monotonic_ns()
+                packet = self._hub.publish(frame, None, captured_at_ns=captured_at_ns)
+                if (
+                    self._enabled.is_set()
+                    and packet.sequence % self._submission_interval_frames == 0
+                ):
+                    self._worker.submit(
+                        InferenceRequest(
+                            source=packet,
+                            mode="full_scan",
+                            submitted_at_ns=time.monotonic_ns(),
+                            image=packet.bgr,
+                        )
+                    )
+                    with self._stats_lock:
+                        self._submitted_sequence = packet.sequence
+                        self._submitted_count += 1
         except Exception as error:  # noqa: BLE001 — ошибка должна дойти до главного цикла.
             self._hub.fail(error)
 
@@ -138,11 +232,19 @@ class CameraCaptureWorker:
         self._capture.release()
         self._thread.join(timeout=2.0)
 
+    def statistics(self) -> dict[str, int]:
+        """Возвращает ID и число кадров, помещённых в буфер распознавания."""
+        with self._stats_lock:
+            return {
+                "submitted_sequence": self._submitted_sequence,
+                "submitted_count": self._submitted_count,
+            }
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Создаёт параметры изолированного запуска V2."""
     parser = argparse.ArgumentParser(
-        description="VideoT16 V2: одно окно показывает кадр и рамку одного результата YOLO."
+        description="VideoT16 V2: свежий вход для YOLO и отдельное плавное окно с задержкой."
     )
     parser.add_argument("--profile", default="sky", help="имя профиля из config/live_drone_profiles.json")
     parser.add_argument("--log", type=Path, help="необязательный путь журнала")
@@ -238,6 +340,22 @@ def validate_profile(profile: V2Profile) -> None:
         raise ValueError("pipeline_v2.submission_interval_frames должен быть от 1 до 120")
     if not isinstance(pipeline["display_fps"], (int, float)) or not 1 <= pipeline["display_fps"] <= 120:
         raise ValueError("pipeline_v2.display_fps должен быть от 1 до 120")
+    if not isinstance(pipeline["output_delay_ms"], int) or not 100 <= pipeline["output_delay_ms"] <= 5000:
+        raise ValueError("pipeline_v2.output_delay_ms должен быть от 100 до 5000")
+    if not isinstance(pipeline["output_buffer_max_mb"], int) or not 64 <= pipeline["output_buffer_max_mb"] <= 2048:
+        raise ValueError("pipeline_v2.output_buffer_max_mb должен быть от 64 до 2048")
+    if not isinstance(pipeline["box_hold_ms"], int) or not 0 <= pipeline["box_hold_ms"] <= 5000:
+        raise ValueError("pipeline_v2.box_hold_ms должен быть от 0 до 5000")
+    requested_frame_bytes = int(profile.capture["width"]) * int(profile.capture["height"]) * 3
+    required_buffer_bytes = math.ceil(
+        requested_frame_bytes * float(profile.capture["fps"]) * int(pipeline["output_delay_ms"]) / 1000
+    )
+    configured_buffer_bytes = int(pipeline["output_buffer_max_mb"]) * 1024 * 1024
+    if required_buffer_bytes > configured_buffer_bytes:
+        raise ValueError(
+            "pipeline_v2.output_buffer_max_mb недостаточен для заданных capture и output_delay_ms "
+            f"(нужно не менее {math.ceil(required_buffer_bytes / 1024 / 1024)} МиБ)"
+        )
     panel = profile.status_panel
     if not isinstance(panel["height"], int) or panel["height"] < 1:
         raise ValueError("status_panel.height должен быть положительным целым числом")
@@ -357,14 +475,19 @@ def compose_frame(
     profile: V2Profile,
     system_text: str,
     result: Any | None,
-    analysis_frame: Any | None = None,
+    detections: tuple[Any, ...] | None = None,
+    output_delay_ms: int = 0,
+    overlay_source_sequence: int | None = None,
+    overlay_mode: str = "NONE",
+    overlay_age_ms: float | None = None,
 ) -> Any:
-    """Строит одно окно из кадра YOLO или живого кадра до первого ответа."""
+    """Показывает цветной выходной кадр и явно маркирует источник рамки."""
     display = profile.display
     panel = profile.status_panel
     panel_height = min(int(panel["height"]), int(display["window_height"]) - 1)
     video_limit_height = min(int(display["max_frame_height"]), int(display["window_height"]) - panel_height)
-    display_source = analysis_frame if analysis_frame is not None else packet.bgr
+    visible_detections = detections if detections is not None else (result.detections if result is not None else ())
+    display_source = draw_overlay(packet.bgr, visible_detections, profile.confidence, profile.overlay)
     fitted = _fit(
         display_source,
         min(int(display["max_frame_width"]), int(display["window_width"])),
@@ -387,14 +510,17 @@ def compose_frame(
         if result is not None
         else None
     )
-    frame_sequence = result.source_sequence if result is not None else packet.sequence
     result_text = (
-        f"SEQ {frame_sequence} | CPU {cpu} | TEMP {temperature} | "
-        f"CONF {confidence:.0%} | THR {profile.confidence:.0%} | "
+        f"SEQ {packet.sequence} | YOLO {result.source_sequence} D{len(result.detections)} | "
+        f"BOX {overlay_source_sequence if overlay_source_sequence is not None else '-'}:{overlay_mode} | "
+        f"OUT {output_delay_ms}ms | CPU {cpu} | TEMP {temperature} | "
+        f"CONF {confidence:.0%} THR {profile.confidence:.0%} | "
         f"YOLO {result.inference_ms:.0f}ms | AGE {age_ms:.0f}ms"
         if result is not None
-        else f"SEQ {packet.sequence} | CPU {cpu} | TEMP {temperature} | WAITING YOLO"
+        else f"SEQ {packet.sequence} | OUT {output_delay_ms}ms | CPU {cpu} | TEMP {temperature} | WAITING YOLO"
     )
+    if overlay_age_ms is not None:
+        result_text += f" | BAGE {overlay_age_ms:.0f}ms"
     status_top = canvas.shape[0] - panel_height
     cv2.rectangle(canvas, (0, status_top), (canvas.shape[1] - 1, canvas.shape[0] - 1), _bgr(panel["background_color_rgb"]), -1)
     cv2.putText(
@@ -408,20 +534,6 @@ def compose_frame(
         cv2.LINE_AA,
     )
     return canvas
-
-
-def prepare_analysis_frame(result: Any, profile: V2Profile) -> Any:
-    """Рисует реальные рамки YOLO на исходном кадре для единственного окна.
-
-    Этот кадр намеренно не подменяется текущим: координаты детекций относятся
-    только к `result.source`, а не к более свежему изображению с камеры.
-    """
-    return draw_overlay(
-        result.source.bgr,
-        result.detections,
-        profile.confidence,
-        profile.overlay,
-    )
 
 
 def _camera_api() -> int:
@@ -443,9 +555,11 @@ def _camera_source(source: int | str) -> int | str:
 
 
 def run(profile: V2Profile, logger: logging.Logger) -> int:
-    """Запускает одно окно с исходными кадрами результатов YOLO."""
+    """Запускает три независимых этапа: захват, YOLO и отложенный вывод."""
     if not profile.model.is_file():
         raise FileNotFoundError(f"ONNX-модель не найдена: {profile.model}")
+    from src.onnx_detector import OnnxDetector
+
     model_size = model_input_size(profile.model)
     detector = OnnxDetector(
         profile.model,
@@ -464,8 +578,18 @@ def run(profile: V2Profile, logger: logging.Logger) -> int:
     except Exception:
         capture.release()
         raise
-    hub = FrameHub(2)
-    camera = CameraCaptureWorker(capture, hub)
+    output_delay_ms = int(profile.pipeline["output_delay_ms"])
+    output_buffer_max_bytes = int(profile.pipeline["output_buffer_max_mb"]) * 1024 * 1024
+    actual_frame_bytes = capture_actual["width"] * capture_actual["height"] * 3
+    actual_required_bytes = math.ceil(actual_frame_bytes * capture_actual["fps"] * output_delay_ms / 1000)
+    if actual_required_bytes > output_buffer_max_bytes:
+        capture.release()
+        raise ValueError(
+            "Лимита буфера недостаточно для фактического режима камеры: "
+            f"нужно не менее {math.ceil(actual_required_bytes / 1024 / 1024)} МиБ"
+        )
+    history_size = max(96, math.ceil((output_delay_ms + 2000) * capture_actual["fps"] / 1000) + 4)
+    hub = FrameHub(history_size, output_buffer_max_bytes)
     status_monitor = SystemStatusMonitor(interval=1.0)
 
     def predict(request: InferenceRequest):
@@ -479,6 +603,16 @@ def run(profile: V2Profile, logger: logging.Logger) -> int:
         return detections, confidence
 
     worker = LatestDetectionWorker(predict, name="v2-yolo")
+    overlay_selector = DelayedOverlaySelector(int(profile.pipeline["box_hold_ms"]))
+    detection_enabled = threading.Event()
+    detection_enabled.set()
+    camera = CameraCaptureWorker(
+        capture,
+        hub,
+        worker,
+        int(profile.pipeline["submission_interval_frames"]),
+        detection_enabled,
+    )
     started = time.monotonic()
     try:
         cv2.namedWindow(profile.display["window_title"], cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
@@ -494,42 +628,51 @@ def run(profile: V2Profile, logger: logging.Logger) -> int:
             capture_actual["fps"],
             profile.threads,
         )
-        logger.info("V2 не использует profiles.%s.two_stage; окно показывает исходный кадр каждого результата YOLO.", profile.name)
+        logger.info(
+            "Три этапа: capture-buffer → YOLO-result-buffer → delayed-display | задержка=%dms | буфер до %dMiB | FPS окна=%s | box-hold=%dms",
+            output_delay_ms,
+            profile.pipeline["output_buffer_max_mb"],
+            profile.pipeline["display_fps"],
+            profile.pipeline["box_hold_ms"],
+        )
+        logger.info("Этап 1 сохраняет кадры; этап 2 распознаёт свежие ID; этап 3 выводит отложенный кадр с последней рамкой не из будущего.")
         last_display_sequence = 0
-        last_submitted_sequence = 0
-        detection_enabled = True
-        cached_result_sequence = 0
-        cached_analysis_frame = None
         display_period = 1.0 / float(profile.pipeline["display_fps"])
         next_display_at = time.perf_counter()
         last_log_at = time.monotonic()
+        last_logged_capture_sequence = 0
         rendered = 0
         started = last_log_at
         while True:
-            packet = hub.latest(last_display_sequence, timeout=1.0)
+            packet = hub.delayed_next(last_display_sequence, output_delay_ms)
             if packet is None:
+                key = cv2.waitKey(max(1, int(profile.display.get("poll_delay_ms", 1)))) & 0xFF
+                if key in (27, ord("q"), ord("Q")):
+                    break
                 continue
+            display_gap = max(0, packet.sequence - last_display_sequence - 1)
             last_display_sequence = packet.sequence
-            if detection_enabled and packet.sequence - last_submitted_sequence >= int(profile.pipeline["submission_interval_frames"]):
-                worker.submit(
-                    InferenceRequest(
-                        source=packet,
-                        mode="full_scan",
-                        submitted_at_ns=time.monotonic_ns(),
-                        image=packet.bgr,
-                    )
+            result = worker.latest_at_or_before(packet.sequence) if detection_enabled.is_set() else None
+            if detection_enabled.is_set():
+                selection = overlay_selector.select(
+                    packet,
+                    result,
+                    profile.confidence,
+                    float(profile.overlay["near_threshold_margin"]),
                 )
-                last_submitted_sequence = packet.sequence
-            result = worker.latest() if detection_enabled else None
-            if result is not None and result.source_sequence != cached_result_sequence:
-                cached_result_sequence = result.source_sequence
-                cached_analysis_frame = prepare_analysis_frame(result, profile)
+            else:
+                overlay_selector.clear(worker.statistics()["latest_result_sequence"] or 0)
+                selection = DisplayOverlaySelection((), None, None, "OFF", None)
             display_frame = compose_frame(
                 packet,
                 profile,
                 status_monitor.text(),
                 result,
-                cached_analysis_frame,
+                selection.detections,
+                output_delay_ms,
+                selection.source_sequence,
+                selection.mode if detection_enabled.is_set() else "OFF",
+                selection.age_ms,
             )
             cv2.imshow(profile.display["window_title"], display_frame)
             rendered += 1
@@ -539,30 +682,57 @@ def run(profile: V2Profile, logger: logging.Logger) -> int:
             if profile.console_status_interval_ms and now - last_log_at >= profile.console_status_interval_ms / 1000:
                 elapsed = max(0.001, now - last_log_at)
                 fps = rendered / elapsed
+                frame_buffers = hub.buffer_status()
+                inference_input = camera.statistics()
+                inference_output = worker.statistics()
+                captured_sequence = int(frame_buffers["latest_sequence"] or 0)
+                capture_fps = max(0, captured_sequence - last_logged_capture_sequence) / elapsed
+                last_logged_capture_sequence = captured_sequence
+                detection_count = len(result.detections) if result is not None else 0
+                eligible_count = (
+                    sum(
+                        item.confidence >= profile.confidence - float(profile.overlay["near_threshold_margin"])
+                        for item in result.detections
+                    )
+                    if result is not None
+                    else 0
+                )
+                output_span = (
+                    f"{frame_buffers['oldest_output_sequence']}..{frame_buffers['newest_output_sequence']}"
+                )
+                visible_box_count = sum(
+                    item.confidence >= profile.confidence - float(profile.overlay["near_threshold_margin"])
+                    for item in selection.detections
+                )
                 if result is None:
-                    logger.info("display=%.1f FPS | current_frame=%d | YOLO=waiting", fps, packet.sequence)
-                else:
-                    age_ms = max(0, time.monotonic_ns() - result.source_captured_at_ns) / 1_000_000
                     logger.info(
-                        "display=%.1f FPS | current=%d | shown=%d | raw=%.0f%% | boxes=%d | queue=%.0fms | yolo=%.0fms | age=%.0fms",
-                        fps,
-                        packet.sequence,
-                        result.source_sequence,
-                        result.raw_confidence * 100,
-                        len(result.detections),
-                        result.queue_ms,
-                        result.inference_ms,
-                        age_ms,
+                        "STAGES cap=%s@%.1f framebuf=%s(%d,%dMiB) | infer_in=%s/%d infer_out=WAITING | display=%d skip=%d overlay=-:NONE | fps=%.1f",
+                        frame_buffers["latest_sequence"], capture_fps, output_span, frame_buffers["output_frames"],
+                        frame_buffers["output_bytes"] // (1024 * 1024), inference_input["submitted_sequence"],
+                        inference_input["submitted_count"], packet.sequence, display_gap, fps,
+                    )
+                else:
+                    overlay_id = selection.source_sequence if selection.source_sequence is not None else "-"
+                    overlay_age = selection.age_ms if selection.age_ms is not None else -1
+                    logger.info(
+                        "STAGES cap=%s@%.1f framebuf=%s(%d,%dMiB) | infer_in=%s/%d overwrite=%d | infer_out=%d det=%d pass=%d raw=%.0f%% q=%.0fms yolo=%.0fms | display=%d skip=%d overlay=%s:%s boxes=%d bage=%.0fms | fps=%.1f",
+                        frame_buffers["latest_sequence"], capture_fps, output_span, frame_buffers["output_frames"],
+                        frame_buffers["output_bytes"] // (1024 * 1024), inference_input["submitted_sequence"],
+                        inference_input["submitted_count"], inference_output["replaced"], result.source_sequence,
+                        detection_count, eligible_count, result.raw_confidence * 100, result.queue_ms,
+                        result.inference_ms, packet.sequence, display_gap, overlay_id, selection.mode,
+                        visible_box_count, overlay_age, fps,
                     )
                 last_log_at = now
                 rendered = 0
             if key in (27, ord("q"), ord("Q")):
                 break
             if key in (ord("r"), ord("R")):
-                detection_enabled = not detection_enabled
-                logger.info("Распознавание V2 %s.", "включено" if detection_enabled else "выключено")
-                if detection_enabled:
-                    last_submitted_sequence = 0
+                if detection_enabled.is_set():
+                    detection_enabled.clear()
+                else:
+                    detection_enabled.set()
+                logger.info("Распознавание V2 %s.", "включено" if detection_enabled.is_set() else "выключено")
             next_display_at += display_period
             remaining_display_time = next_display_at - time.perf_counter()
             if remaining_display_time > 0:
@@ -570,8 +740,8 @@ def run(profile: V2Profile, logger: logging.Logger) -> int:
             else:
                 next_display_at = time.perf_counter()
     finally:
-        worker.close()
         camera.close()
+        worker.close()
         cv2.destroyAllWindows()
         logger.info("V2 остановлен; длительность %.1f с", time.monotonic() - started)
     return 0

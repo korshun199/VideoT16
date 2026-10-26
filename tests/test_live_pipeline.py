@@ -6,6 +6,8 @@ import threading
 import time
 import unittest
 
+import numpy as np
+
 from src.live_pipeline import (
     FrameHub,
     InferenceRequest,
@@ -52,6 +54,42 @@ class LivePipelineTests(unittest.TestCase):
             ("gray-4", "gray-5"),
         )
 
+    def test_delayed_output_returns_newest_frame_past_delay(self) -> None:
+        """Выходной буфер выдаёт кадр по времени и не смешивает вход с выводом."""
+        hub = FrameHub(tracking_history_size=8, output_buffer_max_bytes=64)
+        packets = [
+            hub.publish(np.zeros((2, 2, 3), dtype=np.uint8), f"gray-{index}", captured_at_ns=stamp)
+            for index, stamp in enumerate((1_000_000_000, 1_050_000_000, 1_100_000_000), start=1)
+        ]
+
+        delayed = hub.delayed_latest(after_sequence=0, delay_ms=100, now_ns=1_200_000_000)
+        self.assertEqual(delayed, packets[-1])
+        self.assertIsNone(hub.delayed_latest(after_sequence=3, delay_ms=100, now_ns=1_200_000_000))
+        status = hub.buffer_status()
+        self.assertEqual(status["oldest_output_sequence"], packets[0].sequence)
+        self.assertEqual(status["newest_output_sequence"], packets[-1].sequence)
+        self.assertEqual(status["output_frames"], 3)
+
+    def test_delayed_playback_returns_frames_in_sequence_order(self) -> None:
+        """Плеер получает самый ранний созревший кадр, не перепрыгивая через очередь."""
+        hub = FrameHub(output_buffer_max_bytes=256)
+        packets = [
+            hub.publish(np.zeros((2, 2, 3), dtype=np.uint8), None, captured_at_ns=stamp)
+            for stamp in (1_000_000_000, 1_050_000_000, 1_100_000_000)
+        ]
+
+        self.assertEqual(hub.delayed_next(0, 100, now_ns=1_200_000_000), packets[0])
+        self.assertEqual(hub.delayed_next(1, 100, now_ns=1_200_000_000), packets[1])
+        self.assertEqual(hub.delayed_next(2, 100, now_ns=1_200_000_000), packets[2])
+
+    def test_delayed_output_propagates_camera_errors(self) -> None:
+        """Ошибка захвата не маскируется ожиданием кадров задержанного выхода."""
+        hub = FrameHub(output_buffer_max_bytes=64)
+        hub.fail(RuntimeError("камера отключена"))
+
+        with self.assertRaisesRegex(RuntimeError, "камера отключена"):
+            hub.delayed_latest(after_sequence=0, delay_ms=100)
+
     def test_worker_result_keeps_the_source_sequence_after_delayed_inference(self) -> None:
         """Даже после задержки YOLO результат сохраняет номер исходного кадра."""
         hub = FrameHub()
@@ -82,6 +120,12 @@ class LivePipelineTests(unittest.TestCase):
             self.assertEqual(result.source_captured_at_ns, 123)
             self.assertGreaterEqual(result.inference_ms, 0.0)
             self.assertGreaterEqual(result.queue_ms, 0.0)
+            self.assertIsNone(worker.latest_at_or_before(packet.sequence - 1))
+            snapshot = worker.latest_at_or_before(packet.sequence)
+            self.assertIsNotNone(snapshot)
+            assert snapshot is not None
+            self.assertEqual(snapshot.source_sequence, packet.sequence)
+            self.assertEqual(snapshot.detections[0].name, "FPV-DRON")
         finally:
             worker.close()
 
@@ -119,6 +163,11 @@ class LivePipelineTests(unittest.TestCase):
             self.assertIsNotNone(result)
             assert result is not None
             self.assertEqual(result.source_sequence, packets[2].sequence)
+            stats = worker.statistics()
+            self.assertEqual(stats["submitted"], 3)
+            self.assertEqual(stats["replaced"], 1)
+            self.assertEqual(stats["completed"], 2)
+            self.assertEqual(stats["latest_result_sequence"], packets[2].sequence)
         finally:
             worker.close()
 
