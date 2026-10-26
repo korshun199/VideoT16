@@ -80,6 +80,7 @@ DEFAULT_DISPLAY = {
     "max_frame_width": 1280,
     "max_frame_height": 720,
     "scale_up": False,
+    "fullscreen": False,
     "poll_delay_ms": 1,
 }
 DEFAULT_STATUS_PANEL = {
@@ -530,6 +531,8 @@ def validate_profile(profile: V2Profile) -> None:
     for key in ("window_width", "window_height", "max_frame_width", "max_frame_height"):
         if not isinstance(profile.display[key], int) or profile.display[key] < 1:
             raise ValueError(f"display.{key} должен быть положительным целым числом")
+    if not isinstance(profile.display["fullscreen"], bool):
+        raise ValueError("display.fullscreen должен быть true или false")
     pipeline = profile.pipeline
     if not isinstance(pipeline["submission_interval_frames"], int) or not 1 <= pipeline["submission_interval_frames"] <= 120:
         raise ValueError("pipeline_v2.submission_interval_frames должен быть от 1 до 120")
@@ -601,7 +604,7 @@ def default_log_path() -> Path:
 
 
 def make_logger(log_path: Path) -> logging.Logger:
-    """Настраивает короткий консольный и полный файловый журнал одного запуска."""
+    """Настраивает полный журнал V2 только в файл, не засоряя терминал."""
     log_path.parent.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger(f"videot16.v2.{log_path.name}")
     logger.setLevel(logging.INFO)
@@ -610,9 +613,6 @@ def make_logger(log_path: Path) -> logging.Logger:
     file_handler = logging.FileHandler(log_path, encoding="utf-8")
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(logging.Formatter("%(message)s"))
-    logger.addHandler(console_handler)
     return logger
 
 
@@ -780,6 +780,16 @@ def _camera_source(source: int | str) -> int | str:
     return source
 
 
+def configure_window(display: dict[str, Any]) -> None:
+    """Открывает обычное или полноэкранное окно без изменения геометрии кадра."""
+    title = str(display["window_title"])
+    cv2.namedWindow(title, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
+    if bool(display["fullscreen"]):
+        cv2.setWindowProperty(title, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        return
+    cv2.resizeWindow(title, int(display["window_width"]), int(display["window_height"]))
+
+
 def run(profile: V2Profile, logger: logging.Logger) -> int:
     """Запускает три независимых этапа: захват, YOLO и отложенный вывод."""
     if not profile.model.is_file():
@@ -861,8 +871,7 @@ def run(profile: V2Profile, logger: logging.Logger) -> int:
     )
     started = time.monotonic()
     try:
-        cv2.namedWindow(profile.display["window_title"], cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
-        cv2.resizeWindow(profile.display["window_title"], profile.display["window_width"], profile.display["window_height"])
+        configure_window(profile.display)
         logger.info(
             "V2 single YOLO window: profile=%s | model=%s | input=%s | source=%s | capture=%sx%s@%.1f %s | ORT threads=%s",
             profile.name,

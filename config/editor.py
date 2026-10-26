@@ -123,6 +123,7 @@ FIELD_LABELS = {
     "max_frame_width": "Ширина изображения в окне",
     "max_frame_height": "Высота изображения в окне",
     "scale_up": "Увеличивать изображение",
+    "fullscreen": "Полный экран",
     "stretch_to_fill": "Растягивать изображение на окно",
     "poll_delay_ms": "Интервал обновления окна",
     "near_threshold_margin": "Запас для оранжевой рамки",

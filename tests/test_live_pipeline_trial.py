@@ -19,9 +19,11 @@ from scripts.live_pipeline_trial import (
     DelayedOverlaySelector,
     FastScanPlanner,
     _camera_source,
+    configure_window,
     compose_frame,
     configure_capture,
     load_profile,
+    make_logger,
     validate_profile,
 )
 from src.live_pipeline import DetectionSnapshot, FrameHub
@@ -44,6 +46,7 @@ class LivePipelineTrialTests(unittest.TestCase):
         self.assertEqual(profile.pipeline["box_hold_ms"], 1000)
         self.assertEqual(profile.pipeline["max_match_distance_fraction"], 0.25)
         self.assertEqual(profile.capture["pixel_format"], "YUYV")
+        self.assertTrue(profile.display["fullscreen"])
         self.assertFalse(profile.fast_scan["enabled"])
         self.assertEqual(profile.fast_scan["focus_crop_width"], 640)
         self.assertEqual(profile.fast_scan["focus_lost_after_results"], 3)
@@ -170,6 +173,45 @@ class LivePipelineTrialTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "pipeline_v2.display_fps"):
             validate_profile(profile)
+
+    def test_v2_rejects_non_boolean_fullscreen_before_camera_open(self) -> None:
+        """Полноэкранный режим не принимает строковые и числовые значения JSON."""
+        profile = load_profile("sky")
+        profile.display["fullscreen"] = 1
+
+        with self.assertRaisesRegex(ValueError, "display.fullscreen"):
+            validate_profile(profile)
+
+    def test_configure_window_uses_fullscreen_when_profile_requests_it(self) -> None:
+        """Рабочий профиль включает полноэкранный флаг окна OpenCV."""
+        display = dict(load_profile("sky").display)
+        with patch("scripts.live_pipeline_trial.cv2.namedWindow") as named, patch(
+            "scripts.live_pipeline_trial.cv2.setWindowProperty"
+        ) as fullscreen, patch("scripts.live_pipeline_trial.cv2.resizeWindow") as resize:
+            configure_window(display)
+
+        named.assert_called_once_with(
+            display["window_title"], cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL
+        )
+        fullscreen.assert_called_once_with(
+            display["window_title"], cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN
+        )
+        resize.assert_not_called()
+
+    def test_v2_logger_writes_file_without_console_handler(self) -> None:
+        """Живой V2-запуск оставляет терминал чистым, сохраняя журнал для разбора."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.log"
+            logger = make_logger(path)
+            try:
+                logger.info("строка для файла")
+                self.assertFalse(any(type(handler) is logging.StreamHandler for handler in logger.handlers))
+            finally:
+                for handler in list(logger.handlers):
+                    logger.removeHandler(handler)
+                    handler.close()
+
+            self.assertEqual(path.read_text(encoding="utf-8").count("строка для файла"), 1)
 
     def test_v2_rejects_unknown_capture_pixel_format_before_camera_open(self) -> None:
         """Неподдерживаемый FOURCC не должен доходить до V4L2-устройства."""

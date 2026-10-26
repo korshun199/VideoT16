@@ -16,17 +16,18 @@
       "capture": {
         "pixel_format": "YUYV",
         "width": 1280,
-        "height": 960,
+        "height": 720,
         "fps": 60,
         "buffer_size": 1
       },
       "display": {
         "window_title": "VideoT16 — V2 YOLO",
-        "window_width": 1480,
-        "window_height": 1120,
-        "max_frame_width": 1440,
-        "max_frame_height": 1080,
+        "window_width": 1920,
+        "window_height": 1200,
+        "max_frame_width": 1920,
+        "max_frame_height": 1172,
         "scale_up": true,
+        "fullscreen": true,
         "poll_delay_ms": 1
       },
       "diagnostics": {
