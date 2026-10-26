@@ -2,11 +2,15 @@
 
 set -Eeuo pipefail
 
-# Запускает проверенный небесный профиль; обычный режим доступен через --production.
+# По умолчанию запускает текущую рабочую V2-версию с быстрым поиском.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ "${1:-}" == "--benchmark" ]]; then
     shift
     exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/benchmark_live_inference.py" "$@"
+fi
+
+if [[ "$#" -eq 0 ]]; then
+    exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/live_pipeline_trial.py" --profile sky --fast
 fi
 
 if [[ "${1:-}" == "--v2" ]]; then
@@ -25,13 +29,19 @@ if [[ "${1:-}" == "--v2" ]]; then
     exec "$ROOT/.venv/bin/python3" "$ROOT/config/editor.py" --config-file live_drone_profiles.json
 fi
 
+if [[ "${1:-}" == "--trial" ]]; then
+    shift
+    exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/live_drone_trial.py" --profile sky "$@"
+fi
+
 if [[ "${1:-}" != "--production" ]]; then
     if [[ "$#" -ne 0 ]]; then
-        echo "Запуск испытания: ./lcam"
+        echo "Рабочий запуск: ./lcam"
+        echo "Окно настроек V2: ./lcam --v2"
+        echo "Старый стенд: ./lcam --trial"
         echo "Обычная система: ./lcam --production [параметры]"
         exit 2
     fi
-    exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/live_drone_trial.py" --profile sky
 fi
 shift
 
