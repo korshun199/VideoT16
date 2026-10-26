@@ -186,7 +186,7 @@ def merge_tile_detections(
     detections: Iterable[Detection],
     overlap_threshold: float = 0.45,
 ) -> tuple[Detection, ...]:
-    """Удаляет повторные рамки одного класса из перекрывающихся фрагментов."""
+    """Удаляет повторные рамки одного класса из соседних и перекрывающихся фрагментов."""
     ordered = sorted(detections, key=lambda detection: detection.confidence, reverse=True)
     retained: list[Detection] = []
     for candidate in ordered:
@@ -194,6 +194,12 @@ def merge_tile_detections(
         for selected in retained:
             if selected.name != candidate.name:
                 continue
+
+            # Размеры и координаты обеих рамок нужны для оценки совпадения.
+            selected_width = max(0, selected.x2 - selected.x1)
+            selected_height = max(0, selected.y2 - selected.y1)
+            candidate_width = max(0, candidate.x2 - candidate.x1)
+            candidate_height = max(0, candidate.y2 - candidate.y1)
             intersection_width = max(
                 0, min(selected.x2, candidate.x2) - max(selected.x1, candidate.x1)
             )
@@ -207,6 +213,33 @@ def merge_tile_detections(
             if union and intersection / union > overlap_threshold:
                 duplicate = True
                 break
+
+            # Почти вложенная рамка обычно повторяет ту же цель с другой плитки.
+            smaller_area = min(selected_area, candidate_area)
+            if smaller_area and intersection / smaller_area >= 0.80:
+                duplicate = True
+                break
+
+            # Маленькая цель может сдвинуться между плитками так, что IoU мал.
+            # Сливаем только близкие центры и сопоставимый размер рамок, чтобы
+            # не объединять два отдельно видимых объекта рядом друг с другом.
+            largest_area = max(selected_area, candidate_area)
+            if largest_area and smaller_area / largest_area >= 0.50:
+                selected_center_x = (selected.x1 + selected.x2) / 2
+                selected_center_y = (selected.y1 + selected.y2) / 2
+                candidate_center_x = (candidate.x1 + candidate.x2) / 2
+                candidate_center_y = (candidate.y1 + candidate.y2) / 2
+                center_distance = math.hypot(
+                    selected_center_x - candidate_center_x,
+                    selected_center_y - candidate_center_y,
+                )
+                smaller_diagonal = min(
+                    math.hypot(selected_width, selected_height),
+                    math.hypot(candidate_width, candidate_height),
+                )
+                if smaller_diagonal and center_distance <= smaller_diagonal * 0.30:
+                    duplicate = True
+                    break
         if not duplicate:
             retained.append(candidate)
     return tuple(retained)

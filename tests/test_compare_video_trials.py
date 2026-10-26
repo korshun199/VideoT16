@@ -286,6 +286,29 @@ class CompareVideoTrialsTests(unittest.TestCase):
         self.assertEqual(merged[0].confidence, 0.90)
         self.assertEqual({item.name for item in merged}, {"quadcopter", "fixed-wing"})
 
+    def test_tile_merge_removes_close_shifted_duplicate_with_low_iou(self):
+        """Близкие рамки одной мелкой цели объединяются, даже если IoU ниже обычного NMS."""
+        merged = merge_tile_detections(
+            (
+                Detection(100, 100, 116, 120, "quadcopter", 0.59),
+                Detection(106, 102, 122, 122, "quadcopter", 0.58),
+            )
+        )
+
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0].confidence, 0.59)
+
+    def test_tile_merge_keeps_nearby_distinct_objects(self):
+        """Детекции с раздельными центрами не сливаются только из-за близости."""
+        merged = merge_tile_detections(
+            (
+                Detection(100, 100, 116, 120, "quadcopter", 0.59),
+                Detection(115, 100, 131, 120, "quadcopter", 0.58),
+            )
+        )
+
+        self.assertEqual(len(merged), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
