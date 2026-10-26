@@ -72,7 +72,7 @@ def safe_name(value: str) -> str:
 
 def load_overlay_settings(profile_name: str = "sky") -> dict:
     """Читает параметры рамки и подписи из JSON выбранного профиля."""
-    profile_path = PROJECT_ROOT / "config" / "live_drone_profiles.json"
+    profile_path = PROJECT_ROOT / "config" / "settings.json"
     try:
         with profile_path.open("r", encoding="utf-8") as profile_file:
             document = json.load(profile_file)

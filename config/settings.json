@@ -10,7 +10,6 @@
         "min_confidence": 0.13,
         "tile_size": 640,
         "tile_overlap": 0.16,
-        "threads": 2,
         "full_frame": false
       },
       "capture": {
@@ -48,36 +47,6 @@
         "focus_crop_width": 640,
         "focus_crop_height": 640,
         "focus_lost_after_results": 3
-      },
-      "two_stage": {
-        "enabled": true,
-        "roi_width_percent": 50,
-        "roi_height_percent": 50,
-        "roi_center_x_percent": 50,
-        "roi_center_y_percent": 50,
-        "max_candidates": 1,
-        "candidate_crop_size": 640,
-        "candidate_padding": 2.0,
-        "full_scan_interval_ms": 1500,
-        "max_detection_age_ms": 300,
-        "motion_max_features": 600,
-        "motion_feature_quality": 0.01,
-        "motion_min_feature_distance": 5,
-        "motion_min_background_features": 8,
-        "motion_min_background_inliers": 6,
-        "motion_ransac_threshold_px": 2.5,
-        "motion_max_background_shift_px": 100,
-        "motion_luma_threshold": 18,
-        "motion_chroma_threshold": 22,
-        "motion_min_blob_area": 8,
-        "motion_max_blob_area_percent": 30,
-        "motion_morphology_radius": 0,
-        "motion_suppress_specular": false,
-        "motion_specular_value_min": 245,
-        "motion_specular_saturation_max": 35,
-        "motion_persistence_frames": 1,
-        "motion_track_iou_percent": 10,
-        "motion_min_local_color_contrast": 0
       },
       "overlay": {
         "near_threshold_margin": 0.1,
@@ -128,23 +97,6 @@
         ],
         "thickness": 1,
         "max_text_chars": 96
-      },
-      "evidence": {
-        "local_log": "test_samples/video_trials/logs/live_drone_trial_20261022_094926_667364.log",
-        "observed_at": "2026-10-22T09:49:26+03:00",
-        "camera_observed": {
-          "device": "/dev/video4",
-          "resolution": "640x480",
-          "reported_fps": 30
-        },
-        "processed_frames": 478,
-        "frames_with_box_at_threshold": 333,
-        "box_threshold_percent": 40,
-        "mean_inference_ms": 91.0,
-        "median_inference_ms": 86.0,
-        "confidence_median_percent": 74,
-        "confidence_max_percent": 87,
-        "owner_visual_confirmation": true
       }
     }
   }

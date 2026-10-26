@@ -6,14 +6,9 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ "$#" -eq 0 ]]; then
-    # Запускает профиль sky напрямую, не показывая редактор.
-    exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/live_pipeline_trial.py" --profile sky
+    # Запускает единственный сохранённый профиль из config/settings.json.
+    exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/live_pipeline_trial.py"
 fi
 
-if [[ "$#" -eq 1 && "$1" == "--m" ]]; then
-    # Открывает редактор именно для профиля, который запускается без меню.
-    exec "$ROOT/.venv/bin/python3" "$ROOT/config/editor.py" --config-file live_drone_profiles.json
-fi
-
-printf 'Использование:\n  ./lcam      запуск сохранённого профиля sky\n  ./lcam --m  меню настроек профиля sky\n' >&2
+printf 'Использование: ./lcam\nПараметры меняются в config/settings.json.\n' >&2
 exit 2

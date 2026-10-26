@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""V2: независимый захват и плавный задержанный вывод с сопровождением рамки.
+"""V2: независимый захват, распознавание и задержанный вывод кадров.
 
-Стенд запускается через `./lcam` или открывается для настройки через
-`./lcam --m`; он не открывает UART, J7 или OSD. Камера складывает кадры в ограниченный кольцевой
-буфер; окно проигрывает их с конфигурируемой задержкой, пока YOLO и оптический
-трекер работают параллельно.
+Стенд запускается только через `./lcam` и читает настройки из
+`config/settings.json`; он не открывает UART, J7 или OSD. Камера складывает
+кадры в ограниченный кольцевой буфер; окно показывает их с заданной задержкой,
+а отдельный рабочий поток распознаёт свежие кадры.
 """
 
 from __future__ import annotations
@@ -433,7 +433,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="VideoT16 V2: свежий вход для YOLO и отдельное плавное окно с задержкой."
     )
-    parser.add_argument("--profile", default="sky", help="имя профиля из config/live_drone_profiles.json")
+    parser.add_argument("--profile", default="sky", help="имя профиля из config/settings.json")
     parser.add_argument("--log", type=Path, help="необязательный путь журнала")
     parser.add_argument(
         "--fast",
@@ -463,9 +463,9 @@ def _parse_source(value: object) -> int | str:
     return int(value) if value.isdigit() else value
 
 
-def load_profile(profile_name: str, profiles_path: Path | None = None) -> V2Profile:
-    """Читает один профиль, не используя и не включая `two_stage` старого стенда."""
-    path = profiles_path or PROJECT_ROOT / "config" / "live_drone_profiles.json"
+def load_profile(profile_name: str, settings_path: Path | None = None) -> V2Profile:
+    """Читает один профиль из основного JSON-файла настроек."""
+    path = settings_path or PROJECT_ROOT / "config" / "settings.json"
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:

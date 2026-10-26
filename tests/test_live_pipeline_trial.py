@@ -31,10 +31,10 @@ from src.realtime import Detection
 
 
 class LivePipelineTrialTests(unittest.TestCase):
-    """Проверяет отдельные настройки V2 и независимость от старого two_stage."""
+    """Проверяет основной профиль и настройки настольного V2-конвейера."""
 
-    def test_v2_loads_pipeline_settings_and_does_not_enable_legacy_two_stage(self) -> None:
-        """Профиль V2 использует pipeline_v2 и игнорирует старую экспериментальную схему."""
+    def test_v2_loads_saved_profile_and_pipeline_settings(self) -> None:
+        """Рабочий профиль берёт параметры захвата и обработки из settings.json."""
         project_root = Path(__file__).resolve().parents[1]
         profile = load_profile("sky")
 
@@ -51,19 +51,14 @@ class LivePipelineTrialTests(unittest.TestCase):
         self.assertEqual(profile.fast_scan["focus_crop_width"], 640)
         self.assertEqual(profile.fast_scan["focus_lost_after_results"], 3)
         self.assertEqual(profile.threads, 8)
-        self.assertNotIn("tracking_scale", profile.pipeline)
-        self.assertNotIn("tracking_max_age_frames", profile.pipeline)
-        self.assertNotIn("display_tracker", profile.pipeline)
-        self.assertNotIn("show_analysis_inset", profile.pipeline)
         validate_profile(profile)
 
-    def test_v2_uses_defaults_when_profile_has_no_v2_section(self) -> None:
+    def test_v2_uses_defaults_when_optional_sections_are_missing(self) -> None:
         """Отсутствующий раздел V2 получает безопасные начальные значения."""
         document = {
             "profiles": {
                 "test": {
                     "settings": {"source": "0", "model": "model.onnx"},
-                    "two_stage": {"enabled": True, "roi_width_percent": 1},
                 }
             }
         }

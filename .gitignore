@@ -13,6 +13,7 @@ models/*
 recordings/
 snapshots/
 sounds/*.wav
+test_samples/
 dataset/my_cat/images/raw/
 dataset/my_cat/images/raw_negative/
 dataset/my_cat/images/train/*.jpg
