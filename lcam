@@ -4,13 +4,25 @@ set -Eeuo pipefail
 
 # Запускает проверенный небесный профиль; обычный режим доступен через --production.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "${1:-}" == "--benchmark" ]]; then
+    shift
+    exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/benchmark_live_inference.py" "$@"
+fi
+
+if [[ "${1:-}" == "--v2" ]]; then
+    if [[ "$#" -ne 1 ]]; then
+        echo "Запуск V2: ./lcam --v2"
+        exit 2
+    fi
+    exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/live_pipeline_trial.py" --profile sky
+fi
+
 if [[ "${1:-}" != "--production" ]]; then
     if [[ "$#" -ne 0 ]]; then
         echo "Запуск испытания: ./lcam"
         echo "Обычная система: ./lcam --production [параметры]"
         exit 2
     fi
-    echo "VideoT16: запуск живого испытания профиля sky"
     exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/live_drone_trial.py" --profile sky
 fi
 shift

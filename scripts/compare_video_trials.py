@@ -70,26 +70,77 @@ def safe_name(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._-") or "model"
 
 
-def draw_overlay(frame, detections: Iterable, threshold: float):
-    """Рисует только рамки выше выбранного порога на копии исходного кадра."""
+def load_overlay_settings(profile_name: str = "sky") -> dict:
+    """Читает параметры рамки и подписи из JSON выбранного профиля."""
+    profile_path = PROJECT_ROOT / "config" / "live_drone_profiles.json"
+    try:
+        with profile_path.open("r", encoding="utf-8") as profile_file:
+            document = json.load(profile_file)
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"Не удалось прочитать стиль оверлея из {profile_path}: {error}") from error
+    profiles = document.get("profiles") if isinstance(document, dict) else None
+    profile = profiles.get(profile_name) if isinstance(profiles, dict) else None
+    style = profile.get("overlay") if isinstance(profile, dict) else None
+    if not isinstance(style, dict):
+        raise ValueError(f"В профиле '{profile_name}' отсутствует секция overlay")
+    return style
+
+
+def draw_overlay(
+    frame,
+    detections: Iterable,
+    threshold: float,
+    style: dict | None = None,
+):
+    """Рисует рамки выше порога по геометрии и стилю из профиля JSON."""
     overlay = frame.copy()
+    height, width = overlay.shape[:2]
+    style = style or load_overlay_settings()
+    box_style = style["box"]
+    label_style = style["label"]
+    near_threshold_margin = style.get("near_threshold_margin", 0.0)
+    near_threshold_rgb = style.get("near_threshold_color_rgb", box_style["color_rgb"])
+    near_threshold_color = tuple(reversed(near_threshold_rgb))
+    label_font = getattr(cv2, label_style["font"])
     for detection in detections:
-        if detection.confidence < threshold:
+        if detection.confidence >= threshold:
+            box_color = tuple(reversed(box_style["color_rgb"]))
+            label_color = tuple(reversed(label_style["color_rgb"]))
+        elif (
+            near_threshold_margin > 0
+            and detection.confidence >= threshold - near_threshold_margin
+        ):
+            box_color = near_threshold_color
+            label_color = near_threshold_color
+        else:
             continue
-        first = (int(detection.x1), int(detection.y1))
-        second = (int(detection.x2), int(detection.y2))
-        color = (40, 230, 80)
-        cv2.rectangle(overlay, first, second, color, 2, cv2.LINE_AA)
+        center_x = (detection.x1 + detection.x2) / 2
+        center_y = (detection.y1 + detection.y2) / 2
+        half_width = max(1.0, (detection.x2 - detection.x1) * box_style["scale_x"] / 2)
+        half_height = max(1.0, (detection.y2 - detection.y1) * box_style["scale_y"] / 2)
+        if width > 1:
+            x1 = max(0, min(width - 2, round(center_x - half_width)))
+            x2 = max(x1 + 1, min(width - 1, round(center_x + half_width)))
+        else:
+            x1 = x2 = 0
+        if height > 1:
+            y1 = max(0, min(height - 2, round(center_y - half_height)))
+            y2 = max(y1 + 1, min(height - 1, round(center_y + half_height)))
+        else:
+            y1 = y2 = 0
+        first = (x1, y1)
+        second = (x2, y2)
+        cv2.rectangle(overlay, first, second, box_color, box_style["thickness"], cv2.LINE_AA)
         label = f"{detection.name} {detection.confidence * 100:.0f}%"
-        text_y = max(18, first[1] - 7)
+        text_y = max(label_style["min_y"], first[1] - label_style["offset_y"])
         cv2.putText(
             overlay,
             label,
             (max(0, first[0]), text_y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            color,
-            2,
+            label_font,
+            label_style["font_scale"],
+            label_color,
+            label_style["thickness"],
             cv2.LINE_AA,
         )
     return overlay
@@ -213,6 +264,7 @@ def compare_samples(
     include_tiles: bool = False,
     tile_overlap: float = 0.20,
     tile_size: int = 640,
+    overlay_style: dict | None = None,
 ) -> dict:
     """Сравнивает модели на одинаковых выбранных кадрах и сохраняет отчёт."""
     samples = image_paths(Path(sample_dir))
@@ -240,6 +292,7 @@ def compare_samples(
 
     read_size = input_size_reader or model_input_size
     create_detector = detector_factory or OnnxDetector
+    overlay_style = overlay_style or load_overlay_settings()
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True)
     model_runs = []
@@ -323,7 +376,7 @@ def compare_samples(
                     if mode == "tiles":
                         overlay_dir = overlay_dir / "tiles"
                         overlay_dir.mkdir(exist_ok=True)
-                    overlay = draw_overlay(frame, detections, draw_threshold)
+                    overlay = draw_overlay(frame, detections, draw_threshold, overlay_style)
                     overlay_path = overlay_dir / (
                         f"frame_{frame_number:04d}_{safe_name(image_path.stem)}.png"
                     )

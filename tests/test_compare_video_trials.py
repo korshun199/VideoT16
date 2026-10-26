@@ -8,10 +8,13 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from unittest.mock import patch
 
 from scripts.compare_video_trials import (
     compare_samples,
+    draw_overlay,
     generate_tiles,
+    load_overlay_settings,
     merge_tile_detections,
 )
 from src.realtime import Detection
@@ -19,6 +22,96 @@ from src.realtime import Detection
 
 class CompareVideoTrialsTests(unittest.TestCase):
     """Проверяет локальное сравнение моделей без обучения и эталонной разметки."""
+
+    def test_overlay_uses_configured_box_geometry_and_style(self):
+        """Рамка и подпись берут геометрию и оформление из параметров профиля."""
+        frame = np.zeros((50, 50, 3), dtype=np.uint8)
+        detection = Detection(10, 20, 30, 40, "drone", 0.80)
+        style = {
+            "box": {
+                "scale_x": 2.0,
+                "scale_y": 0.5,
+                "thickness": 1,
+                "color_rgb": [255, 0, 0],
+            },
+            "label": {
+                "font": "FONT_HERSHEY_PLAIN",
+                "font_scale": 0.7,
+                "thickness": 1,
+                "offset_y": 3,
+                "min_y": 10,
+                "color_rgb": [0, 255, 0],
+            },
+        }
+
+        with (
+            patch("scripts.compare_video_trials.cv2.rectangle") as rectangle,
+            patch("scripts.compare_video_trials.cv2.putText") as put_text,
+        ):
+            draw_overlay(frame, (detection,), threshold=0.5, style=style)
+
+        rectangle_args = rectangle.call_args.args
+        self.assertEqual(rectangle_args[1], (0, 25))
+        self.assertEqual(rectangle_args[2], (40, 35))
+        self.assertEqual(rectangle_args[3], (0, 0, 255))
+        self.assertEqual(rectangle_args[4], 1)
+        text_args = put_text.call_args.args
+        self.assertEqual(text_args[1], "drone 80%")
+        self.assertEqual(text_args[2], (0, 22))
+        self.assertEqual(text_args[3], cv2.FONT_HERSHEY_PLAIN)
+        self.assertEqual(text_args[4], 0.7)
+        self.assertEqual(text_args[5], (0, 255, 0))
+        self.assertEqual(text_args[6], 1)
+
+    def test_overlay_clamps_box_fully_outside_frame_to_valid_pixels(self):
+        """Рамка у правого нижнего края остаётся в пределах размера кадра."""
+        frame = np.zeros((50, 50, 3), dtype=np.uint8)
+        detection = Detection(100, 100, 120, 120, "drone", 0.80)
+
+        with patch("scripts.compare_video_trials.cv2.rectangle") as rectangle:
+            draw_overlay(frame, (detection,), threshold=0.5, style={
+                "box": {
+                    "scale_x": 1.0,
+                    "scale_y": 1.0,
+                    "thickness": 2,
+                    "color_rgb": [80, 230, 40],
+                },
+                "label": {
+                    "font": "FONT_HERSHEY_SIMPLEX",
+                    "font_scale": 0.55,
+                    "thickness": 2,
+                    "offset_y": 7,
+                    "min_y": 18,
+                    "color_rgb": [80, 230, 40],
+                },
+            })
+
+        first, second = rectangle.call_args.args[1:3]
+        self.assertLessEqual(first[0], second[0])
+        self.assertLessEqual(first[1], second[1])
+        self.assertLess(second[0], frame.shape[1])
+        self.assertLess(second[1], frame.shape[0])
+
+    def test_overlay_uses_configured_near_threshold_color_band(self):
+        """Основной порог зелёный, полоса ниже оранжевая, слабые кандидаты скрыты."""
+        frame = np.zeros((50, 50, 3), dtype=np.uint8)
+        detections = (
+            Detection(1, 1, 10, 10, "drone", 0.80),
+            Detection(15, 15, 25, 25, "drone", 0.65),
+            Detection(30, 30, 40, 40, "drone", 0.59),
+        )
+        style = load_overlay_settings()
+
+        with (
+            patch("scripts.compare_video_trials.cv2.rectangle") as rectangle,
+            patch("scripts.compare_video_trials.cv2.putText") as put_text,
+        ):
+            draw_overlay(frame, detections, threshold=0.70, style=style)
+
+        self.assertEqual(rectangle.call_count, 2)
+        self.assertEqual(rectangle.call_args_list[0].args[3], (40, 230, 80))
+        self.assertEqual(rectangle.call_args_list[1].args[3], (0, 165, 255))
+        self.assertEqual(put_text.call_count, 2)
 
     def test_writes_per_model_overlays_and_threshold_report(self):
         """Один и тот же кадр получает результаты и пороговую сводку обеих моделей."""
