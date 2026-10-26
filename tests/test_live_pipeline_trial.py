@@ -38,6 +38,7 @@ class LivePipelineTrialTests(unittest.TestCase):
         self.assertEqual(profile.pipeline["output_delay_ms"], 2200)
         self.assertEqual(profile.pipeline["output_buffer_max_mb"], 512)
         self.assertEqual(profile.pipeline["box_hold_ms"], 1000)
+        self.assertEqual(profile.pipeline["max_match_distance_fraction"], 0.25)
         self.assertEqual(profile.threads, 8)
         self.assertNotIn("tracking_scale", profile.pipeline)
         self.assertNotIn("tracking_max_age_frames", profile.pipeline)

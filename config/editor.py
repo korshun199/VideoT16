@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import copy
+import argparse
 import hashlib
 import hmac
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -53,6 +55,47 @@ FIELD_LABELS = {
     "source": "Источник видео",
     "camera_source": "Тип камеры",
     "camera_device": "Устройство захвата",
+    "pixel_format": "Формат видеокадра",
+    "output_device": "Устройство вывода",
+    "width_percent": "Ширина центральной области",
+    "height_percent": "Высота центральной области",
+    "center_x_percent": "Центр поиска по горизонтали",
+    "center_y_percent": "Центр поиска по вертикали",
+    "max_features": "Максимум точек фона",
+    "feature_quality": "Чувствительность поиска точек",
+    "min_feature_distance": "Минимальное расстояние между точками",
+    "min_background_features": "Минимум точек для фона",
+    "min_background_inliers": "Минимум согласованных точек",
+    "ransac_threshold_px": "Допуск оценки сдвига фона",
+    "max_background_shift_px": "Максимальный сдвиг камеры",
+    "luma_threshold": "Порог изменения яркости",
+    "chroma_threshold": "Порог изменения цвета",
+    "min_blob_area": "Минимальная площадь кандидата",
+    "max_blob_area_percent": "Максимальная доля области кандидата",
+    "morphology_radius": "Очистка мелкого шума",
+    "suppress_specular": "Подавлять светлые блики",
+    "specular_value_min": "Минимальная яркость блика",
+    "specular_saturation_max": "Максимальная насыщенность блика",
+    "persistence_frames": "Кадров для подтверждения кандидата",
+    "track_iou_percent": "Перекрытие рамок для сопровождения",
+    "max_candidates": "Максимум рамок движения",
+    "min_local_color_contrast": "Минимальное отличие цвета от окружения",
+    "opencv_threads": "Потоки OpenCV",
+    "show_motion_mask": "Показывать маску движения",
+    "show_roi": "Показывать область поиска",
+    "mask_opacity_percent": "Прозрачность маски движения",
+    "roi_thickness": "Толщина рамки области поиска",
+    "motion_box_thickness": "Толщина рамки движения",
+    "detector_box_thickness": "Толщина рамки YOLO",
+    "status_height": "Высота строки состояния",
+    "max_detection_age_ms": "Скрывать устаревший результат YOLO",
+    "interval_ms": "Интервал записи диагностики",
+    "console_status_interval_ms": "Интервал строки состояния",
+    "submission_interval_frames": "Отправлять каждый N-й кадр в распознавание",
+    "output_delay_ms": "Задержка выходного видео",
+    "output_buffer_max_mb": "Максимальная память видеобуфера",
+    "box_hold_ms": "Удержание рамки объекта",
+    "max_match_distance_fraction": "Допустимое смещение рамки между кадрами",
     "digital_camera_device": "Цифровая камера",
     "confidence": "Порог уверенности",
     "confidence_percent": "Порог уверенности",
@@ -110,6 +153,10 @@ SECTION_LABELS = {
     "label": "Подпись объекта",
     "status_panel": "Панель состояния",
     "diagnostics": "Диагностика",
+    "pipeline_v2": "Конвейер V2",
+    "roi": "Центральная область поиска",
+    "motion": "Компенсация фона и движение",
+    "detector": "Проверка нейросетью YOLO",
     "detection": "Распознавание",
     "desktop": "Настройки компьютера",
     "video_output": "Видеовыходы",
@@ -222,12 +269,36 @@ def reject_json_constant(value: str) -> None:
 def build_options(project_dir: Path, current: dict[str, Any]) -> dict[str, Any]:
     """Собирает модели, камеры, шрифты и другие варианты списков."""
     models: list[dict[str, str]] = []
+    model_input_sizes: dict[str, int] = {}
     model_dir = Path(project_dir) / "models"
     if model_dir.is_dir():
         for path in sorted(model_dir.rglob("*")):
-            if path.is_file() and not path.is_symlink() and path.suffix.lower() in {".onnx", ".pt", ".engine"}:
+            is_v2_profiles = "profiles" in current and "version" in current
+            supported_extensions = {".onnx"} if is_v2_profiles else {".onnx", ".pt", ".engine"}
+            if path.is_file() and not path.is_symlink() and path.suffix.lower() in supported_extensions:
                 relative = path.relative_to(project_dir).as_posix()
-                models.append({"value": relative, "label": relative})
+                if is_v2_profiles:
+                    try:
+                        import onnx
+
+                        model = onnx.load_model(str(path), load_external_data=False)
+                        inputs = model.graph.input
+                        shape = inputs[0].type.tensor_type.shape.dim if len(inputs) == 1 else ()
+                        dimensions = [dimension.dim_value for dimension in shape]
+                        if (
+                            len(dimensions) != 4
+                            or dimensions[0] != 1
+                            or dimensions[1] != 3
+                            or dimensions[2] <= 0
+                            or dimensions[2] != dimensions[3]
+                        ):
+                            continue
+                        model_input_sizes[relative] = dimensions[2]
+                        models.append({"value": relative, "label": f"{relative} — вход {dimensions[2]}×{dimensions[2]}"})
+                    except Exception:
+                        continue
+                else:
+                    models.append({"value": relative, "label": relative})
 
     cameras: dict[str, str] = {"auto": "Автовыбор"}
     for index in range(10):
@@ -254,15 +325,26 @@ def build_options(project_dir: Path, current: dict[str, Any]) -> dict[str, Any]:
             current_strings.add(value)
 
     collect_strings(current)
+    is_v2_profiles = "profiles" in current and "version" in current
     for value in current_strings:
         if value.lower().endswith((".onnx", ".pt", ".engine")):
-            if not any(item["value"] == value for item in models):
+            if not is_v2_profiles and not any(item["value"] == value for item in models):
                 models.append({"value": value, "label": f"Текущая: {value}"})
         if value.startswith("/dev/") or value.isdigit() or value == "auto":
             cameras.setdefault(value, f"Текущее: {value}")
 
+    capture_modes: list[dict[str, int | float | str]] = []
+    try:
+        profile = current.get("profiles", {}).get("sky", {})
+        source = profile.get("settings", {}).get("source")
+        capture_modes = available_capture_modes(source)
+    except (AttributeError, TypeError):
+        capture_modes = []
+
     return {
         "models": models,
+        "model_input_sizes": model_input_sizes,
+        "capture_modes": capture_modes,
         "cameras": [
             {"value": value, "label": label}
             for value, label in sorted(cameras.items(), key=lambda item: (item[0] != "auto", item[0]))
@@ -282,7 +364,48 @@ def build_options(project_dir: Path, current: dict[str, Any]) -> dict[str, Any]:
         ],
         "fonts": [{"value": value, "label": label} for value, label in FONT_OPTIONS],
         "sizes": SIZE_OPTIONS,
+        "pixel_formats": [
+            {"value": value, "label": label}
+            for value, label in [("MJPG", "MJPEG (обычно легче для USB)"), ("YUYV", "YUYV / несжатый")]
+        ],
+        "output_devices": [
+            {"value": value, "label": label}
+            for value, label in [("monitor", "Окно на мониторе"), ("none", "Без окна (только журнал)")]
+        ],
     }
+
+
+def available_capture_modes(source: Any) -> list[dict[str, int | float | str]]:
+    """Читает поддерживаемые разрешения/FPS камеры штатной read-only командой V4L2."""
+    if not isinstance(source, str) or not source or source == "auto":
+        return []
+    try:
+        result = subprocess.run(
+            ["v4l2-ctl", f"--device={source}", "--list-formats-ext"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+
+    modes: set[tuple[int, int, int]] = set()
+    resolution: tuple[int, int] | None = None
+    for line in result.stdout.splitlines():
+        size_match = re.search(r"Size:\s+Discrete\s+(\d+)x(\d+)", line)
+        if size_match:
+            resolution = (int(size_match.group(1)), int(size_match.group(2)))
+            continue
+        fps_match = re.search(r"\(([\d.]+)\s+fps\)", line)
+        if resolution and fps_match:
+            modes.add((*resolution, int(round(float(fps_match.group(1))))))
+    return [
+        {"width": width, "height": height, "fps": fps, "label": f"{width}×{height} @ {fps} кадр/с"}
+        for width, height, fps in sorted(modes, key=lambda mode: (mode[0] * mode[1], mode[2]), reverse=True)
+    ]
 
 
 def save_config(config_dir: Path, name: str, content: str, expected_revision: str) -> str:
@@ -353,13 +476,64 @@ def numeric_spec(key: str, value: int | float, path: tuple[str, ...] = ()) -> tu
     if "fps" in lower:
         return (1, 120, 1, 1.0, " кадр/с")
     if lower == "threads":
+        if path and path[0] == "detector":
+            return (0, 64, 1, 1.0, "")
         return (1, 16, 1, 1.0, "")
+    if lower in {"confidence_percent", "track_iou_percent", "mask_opacity_percent"}:
+        return (0, 100, 1, 1.0, "%")
+    if lower in {"width_percent", "height_percent", "max_blob_area_percent"}:
+        return (1, 100, 1, 1.0, "%")
+    if lower in {"center_x_percent", "center_y_percent"}:
+        return (0, 100, 1, 1.0, "%")
+    if lower == "feature_quality":
+        return (1, 100, 1, 0.001, "")
+    if lower in {"specular_value_min", "specular_saturation_max"}:
+        return (0, 255, 1, 1.0, "")
+    if lower in {"max_features", "min_background_features", "min_background_inliers"}:
+        return (4, 2000 if lower == "max_features" else 200, 1 if lower != "max_features" else 10, 1.0, " точек")
+    if lower == "min_feature_distance":
+        return (1, 80, 1, 1.0, " пикс.")
+    if lower in {"ransac_threshold_px", "max_background_shift_px"}:
+        return (1, 500, 1, 1.0, " пикс.")
+    if lower in {"luma_threshold", "chroma_threshold"}:
+        return (1, 255, 1, 1.0, "")
+    if lower == "min_blob_area":
+        return (1, 10000, 1, 1.0, " пикс.")
+    if lower == "morphology_radius":
+        return (0, 12, 1, 1.0, " пикс.")
+    if lower == "persistence_frames":
+        return (1, 10, 1, 1.0, " кадр.")
+    if lower == "max_candidates":
+        return (1, 100, 1, 1.0, "")
+    if lower == "min_local_color_contrast":
+        return (0, 150, 1, 1.0, " Lab")
+    if lower == "opencv_threads":
+        return (1, 32, 1, 1.0, "")
+    if lower in {"mask_opacity_percent"}:
+        return (0, 100, 1, 1.0, "%")
+    if lower == "status_height":
+        return (20, 120, 1, 1.0, " пикс.")
+    if lower == "max_detection_age_ms":
+        return (50, 5000, 50, 1.0, " мс")
+    if lower in {"output_delay_ms", "box_hold_ms", "console_status_interval_ms", "full_scan_interval_ms"}:
+        maximum = 5000 if lower in {"output_delay_ms", "box_hold_ms"} else 10000
+        return (0 if lower == "box_hold_ms" else 100, maximum, 100, 1.0, " мс")
+    if lower == "output_buffer_max_mb":
+        return (64, 2048, 32, 1.0, " МиБ")
+    if lower == "submission_interval_frames":
+        return (1, 120, 1, 1.0, " кадр.")
+    if lower == "max_match_distance_fraction" and 0 <= value <= 1:
+        return (0, 100, 1, 0.01, "%")
+    if lower == "interval_ms":
+        return (100, 10000, 100, 1.0, " мс")
     if "interval" in lower and any(word in lower for word in ("inference", "poll", "status")):
         return (1, 5000, 10 if lower.endswith("ms") else 1, 1.0, " мс" if lower.endswith("ms") else " кадр")
     if lower in {"inference_size", "tile_size"}:
         return None
     if lower in {"scale_x", "scale_y"}:
         return (10, 300, 5, 0.01, "×")
+    if lower == "buffer_size" and path and path[0] == "capture":
+        return (1, 16, 1, 1.0, "")
     if lower in {"bar_width", "bar_height", "buffer_size"} and isinstance(value, int):
         return (1, 240, 1, 1.0, "")
     if lower == "height" and len(path) > 1 and path[-2] == "status_panel":
@@ -410,14 +584,36 @@ def apply_defaults(data: dict[str, Any], defaults: dict[str, Any] = DEFAULT_SETT
     return restored
 
 
+def launcher_command(project_dir: Path, config_name: str, platform: str | None = None) -> tuple[Path, list[str]]:
+    """Выбирает штатный запуск или отдельный Linux-прототип по имени конфигурации."""
+    operating_system = os.name if platform is None else platform
+    if operating_system == "nt":
+        launcher = Path(project_dir) / "start.py"
+        return launcher, [sys.executable, str(launcher)]
+    if config_name == "live_drone_profiles.json":
+        launcher = Path(project_dir) / "lcam"
+        return launcher, [str(launcher), "--v2", "--run"]
+    launcher_name = "lcam3" if config_name == "motion_trial.json" else "lcam"
+    launcher = Path(project_dir) / launcher_name
+    if launcher_name == "lcam3":
+        return launcher, [sys.executable, str(launcher)]
+    return launcher, [str(launcher)]
+
+
 class ConfigEditorWindow(QMainWindow):
     """Главное нативное окно выбора, изменения и сохранения конфигураций."""
 
-    def __init__(self, project_dir: Path = PROJECT_DIR, config_dir: Path = CONFIG_DIR) -> None:
+    def __init__(
+        self,
+        project_dir: Path = PROJECT_DIR,
+        config_dir: Path = CONFIG_DIR,
+        initial_config_name: str | None = None,
+    ) -> None:
         """Создаёт окно управления настройками без браузера и сетевого сервера."""
         super().__init__()
         self.project_dir = Path(project_dir).resolve()
         self.config_dir = Path(config_dir).resolve(strict=True)
+        self.initial_config_name = initial_config_name
         self.current_name: str | None = None
         self.current_revision: str | None = None
         self.current_data: dict[str, Any] | None = None
@@ -506,7 +702,10 @@ class ConfigEditorWindow(QMainWindow):
             self.statusBar().showMessage("В каталоге config/ нет JSON-файлов")
             self._show_empty_message("В каталоге config/ не найдено файлов настроек.")
             return
-        initial_name = "runtime_settings.json" if "runtime_settings.json" in names else names[0]
+        if self.initial_config_name in names:
+            initial_name = self.initial_config_name
+        else:
+            initial_name = "runtime_settings.json" if "runtime_settings.json" in names else names[0]
         blocker = QSignalBlocker(self.file_combo)
         self.file_combo.setCurrentText(initial_name)
         del blocker
@@ -565,6 +764,15 @@ class ConfigEditorWindow(QMainWindow):
         self.options = build_options(self.project_dir, data)
         self._render_config()
         self.statusBar().showMessage(f"Загружено: {name}")
+        if name == "live_drone_profiles.json":
+            mode_combo = getattr(self, "capture_mode_combo", None)
+            if mode_combo is not None and mode_combo.count():
+                capture = self.current_data["profiles"]["sky"]["capture"]
+                selected_mode = mode_combo.currentData()
+                current_mode = (capture["width"], capture["height"], round(capture["fps"]))
+                if current_mode != selected_mode:
+                    self._select_v2_capture_mode(mode_combo)
+                    self.statusBar().showMessage("Выбран поддерживаемый режим камеры; сохрани настройки кнопкой ниже")
         self.defaults_button.setEnabled(name == "runtime_settings.json")
         self.defaults_button.setToolTip(
             "Восстановить программные значения по умолчанию. Файл изменится только после сохранения."
@@ -584,8 +792,16 @@ class ConfigEditorWindow(QMainWindow):
 
     def _render_mapping(self, parent_layout: QVBoxLayout | QFormLayout, values: dict[str, Any], path: tuple[str, ...]) -> None:
         """Рисует верхние секции в рамках, а вложенные разделы — плоскими заголовками."""
+        if path == ("profiles", "sky", "capture"):
+            self.capture_mode_combo = None
         for key, value in values.items():
             current_path = (*path, key)
+            if path == ("profiles", "sky", "capture") and key in {"width", "height", "fps"}:
+                if key == "width":
+                    control = self._make_capture_mode_combo(values)
+                    if isinstance(parent_layout, QFormLayout):
+                        parent_layout.addRow("Режим камеры:", control)
+                continue
             if isinstance(value, dict):
                 if not path:
                     group = QGroupBox(section_label(key))
@@ -659,6 +875,8 @@ class ConfigEditorWindow(QMainWindow):
                 shown = f"{raw:g}{unit}" if unit != "×" else f"{number:.2f}×"
                 if unit == "" and multiplier != 1.0:
                     shown = f"{number:.2f}"
+                if key.lower() == "threads":
+                    shown = "все ядра" if raw == 0 else f"{raw} потоков"
                 return number, shown
 
             def update_number(raw: int, field_path: tuple[str, ...] = path, multiplier: float = scale, unit: str = suffix, label: QLabel = display, as_integer: bool = keep_integer) -> None:
@@ -692,13 +910,82 @@ class ConfigEditorWindow(QMainWindow):
                 choices = [(item["value"], item["label"]) for item in self.options["cameras"]]
             elif lower == "camera_source":
                 choices = [(item["value"], item["label"]) for item in self.options["camera_sources"]]
+            elif lower == "pixel_format":
+                choices = [(item["value"], item["label"]) for item in self.options["pixel_formats"]]
+            elif lower == "output_device":
+                choices = [(item["value"], item["label"]) for item in self.options["output_devices"]]
             elif lower == "font":
                 choices = [(item["value"], item["label"]) for item in self.options["fonts"]]
             elif lower == "position":
                 choices = [(item["value"], item["label"]) for item in self.options["positions"]]
+            if lower == "model" and self.current_name == "live_drone_profiles.json":
+                combo = QComboBox()
+                compatible_models = self.options.get("model_input_sizes", {})
+                if value not in compatible_models:
+                    combo.addItem("Выбери поддерживаемую ONNX-модель", None)
+                for option_value, label in choices or []:
+                    combo.addItem(label, option_value)
+                selected_index = combo.findData(value)
+                if selected_index >= 0:
+                    combo.setCurrentIndex(selected_index)
+                combo.currentIndexChanged.connect(lambda _index, field=combo, field_path=path: self._select_v2_model(field, field_path))
+                return combo
             if choices:
-                return self._make_combo(key, value, choices, path)
+                combo = self._make_combo(key, value, choices, path)
+                if lower == "source" and self.current_name == "live_drone_profiles.json":
+                    combo.currentIndexChanged.connect(lambda _index, field=combo, field_path=path: self._select_v2_source(field, field_path))
+                return combo
         return None
+
+    def _make_capture_mode_combo(self, capture: dict[str, Any]) -> QWidget:
+        """Показывает только режимы разрешения/FPS, перечисленные выбранной камерой."""
+        modes = self.options.get("capture_modes", [])
+        if not modes:
+            self.capture_mode_combo = None
+            return QLabel("Нет списка режимов камеры (проверь подключение и v4l2-ctl)")
+        combo = QComboBox()
+        current = (capture.get("width"), capture.get("height"), round(float(capture.get("fps", 0))))
+        matching_index = -1
+        for index, mode in enumerate(modes):
+            combo.addItem(str(mode["label"]), (mode["width"], mode["height"], mode["fps"]))
+            if combo.itemData(index) == current:
+                matching_index = index
+        combo.setCurrentIndex(matching_index if matching_index >= 0 else 0)
+        combo.currentIndexChanged.connect(lambda _index, field=combo: self._select_v2_capture_mode(field))
+        self.capture_mode_combo = combo
+        return combo
+
+    def _select_v2_capture_mode(self, combo: QComboBox) -> None:
+        """Записывает выбранный допустимый камерой режим в три поля JSON-профиля."""
+        if self.current_data is None or not isinstance(combo.currentData(), tuple):
+            return
+        width, height, fps = combo.currentData()
+        capture_path = ("profiles", "sky", "capture")
+        for key, value in (("width", width), ("height", height), ("fps", fps)):
+            self._set_value((*capture_path, key), value)
+
+    def _select_v2_source(self, combo: QComboBox, path: tuple[str, ...]) -> None:
+        """Обновляет перечень видеорежимов после выбора другого устройства захвата."""
+        if self.current_data is None or self.current_name != "live_drone_profiles.json":
+            return
+        self._set_value(path, combo.currentData())
+        self.options = build_options(self.project_dir, self.current_data)
+        self._render_config()
+        mode_combo = getattr(self, "capture_mode_combo", None)
+        if mode_combo is not None and mode_combo.count():
+            self._select_v2_capture_mode(mode_combo)
+        self.save_button.setEnabled(self._is_dirty())
+
+    def _select_v2_model(self, combo: QComboBox, path: tuple[str, ...]) -> None:
+        """Показывает размер входа выбранной ONNX-модели и сохраняет её путь."""
+        if self.current_data is None or self.current_name != "live_drone_profiles.json":
+            return
+        model_path = str(combo.currentData())
+        model_size = self.options.get("model_input_sizes", {}).get(model_path)
+        if model_size is None:
+            return
+        self._set_value(path, model_path)
+        self.statusBar().showMessage(f"Выбрана модель с фиксированным входом {model_size}×{model_size}; размер входа не задаётся вручную")
 
     def _make_combo(self, key: str, value: Any, choices: list[tuple[Any, str]], path: tuple[str, ...]) -> QComboBox:
         """Строит список значений и сохраняет фактический тип JSON-параметра."""
@@ -849,6 +1136,21 @@ class ConfigEditorWindow(QMainWindow):
         if self.current_data is None:
             self.statusBar().showMessage("Сначала выбери файл настроек.")
             return
+        if self.current_name == "live_drone_profiles.json":
+            profile = self.current_data.get("profiles", {}).get("sky", {})
+            model_path = profile.get("settings", {}).get("model")
+            if model_path not in self.options.get("model_input_sizes", {}):
+                self._show_error("Модель не поддерживается", ValueError("Выбери доступную фиксированную ONNX-модель из списка."))
+                return
+            capture = profile.get("capture", {})
+            selected_mode = (capture.get("width"), capture.get("height"), round(float(capture.get("fps", 0))))
+            valid_modes = {
+                (mode["width"], mode["height"], mode["fps"])
+                for mode in self.options.get("capture_modes", [])
+            }
+            if selected_mode not in valid_modes:
+                self._show_error("Режим камеры не подтверждён", ValueError("Выбери режим из списка, поддерживаемого текущей USB-камерой."))
+                return
         if self._is_dirty():
             answer = QMessageBox.question(
                 self,
@@ -864,16 +1166,11 @@ class ConfigEditorWindow(QMainWindow):
             self.statusBar().showMessage("Распознавание уже запущено. Нажми Esc в окне видео, чтобы остановить.")
             return
 
-        if os.name == "nt":
-            launcher = self.project_dir / "start.py"
-            command = [sys.executable, str(launcher)]
-        else:
-            launcher = self.project_dir / "lcam"
-            command = [str(launcher)]
+        launcher, command = launcher_command(self.project_dir, self.current_name)
         if not launcher.is_file():
             self._show_error("Не удалось запустить распознавание", FileNotFoundError(f"Файл запуска не найден: {launcher}"))
             return
-        if os.name != "nt" and not os.access(launcher, os.X_OK):
+        if os.name != "nt" and command[0] == str(launcher) and not os.access(launcher, os.X_OK):
             self._show_error("Не удалось запустить распознавание", PermissionError(f"Файл не исполняемый: {launcher}"))
             return
 
@@ -905,10 +1202,16 @@ class ConfigEditorWindow(QMainWindow):
 
 def main() -> int:
     """Запускает нативное приложение Qt и сообщает ошибки в окне."""
-    application = QApplication(sys.argv)
+    parser = argparse.ArgumentParser(description="Нативное окно настроек VideoT16")
+    parser.add_argument(
+        "--config-file",
+        help="JSON-файл из config/, который нужно сразу открыть",
+    )
+    arguments = parser.parse_args()
+    application = QApplication([sys.argv[0]])
     application.setApplicationName("VideoT16 — настройки")
     application.setOrganizationName("VideoT16")
-    window = ConfigEditorWindow()
+    window = ConfigEditorWindow(initial_config_name=arguments.config_file)
     window.show()
     return application.exec()
 

@@ -50,6 +50,7 @@ DEFAULT_PIPELINE = {
     "output_delay_ms": 2200,
     "output_buffer_max_mb": 512,
     "box_hold_ms": 1000,
+    "max_match_distance_fraction": 0.25,
 }
 
 DEFAULT_CAPTURE = {"width": 640, "height": 480, "fps": 30.0, "buffer_size": 1}
@@ -76,7 +77,6 @@ DEFAULT_STATUS_PANEL = {
 }
 DEFAULT_OVERLAY = {
     "near_threshold_margin": 0.10,
-    "max_match_distance_fraction": 0.25,
     "near_threshold_color_rgb": [255, 165, 0],
     "box": {"scale_x": 1.0, "scale_y": 1.0, "thickness": 1, "color_rgb": [80, 230, 40]},
     "label": {
@@ -425,9 +425,9 @@ def validate_profile(profile: V2Profile) -> None:
         raise ValueError("pipeline_v2.output_buffer_max_mb должен быть от 64 до 2048")
     if not isinstance(pipeline["box_hold_ms"], int) or not 0 <= pipeline["box_hold_ms"] <= 5000:
         raise ValueError("pipeline_v2.box_hold_ms должен быть от 0 до 5000")
-    max_match_distance = profile.overlay["max_match_distance_fraction"]
+    max_match_distance = profile.pipeline["max_match_distance_fraction"]
     if not isinstance(max_match_distance, (int, float)) or not 0.0 < max_match_distance <= 1.0:
-        raise ValueError("overlay.max_match_distance_fraction должен быть в диапазоне (0, 1]")
+        raise ValueError("pipeline_v2.max_match_distance_fraction должен быть в диапазоне (0, 1]")
     requested_frame_bytes = int(profile.capture["width"]) * int(profile.capture["height"]) * 3
     required_buffer_bytes = math.ceil(
         requested_frame_bytes * float(profile.capture["fps"]) * int(pipeline["output_delay_ms"]) / 1000
@@ -743,7 +743,7 @@ def run(profile: V2Profile, logger: logging.Logger) -> int:
                     after,
                     profile.confidence,
                     float(profile.overlay["near_threshold_margin"]),
-                    float(profile.overlay["max_match_distance_fraction"]),
+                    float(profile.pipeline["max_match_distance_fraction"]),
                 )
             else:
                 overlay_selector.clear(worker.statistics()["latest_result_sequence"] or 0)

@@ -37,9 +37,7 @@
         "display_fps": 60,
         "output_delay_ms": 2200,
         "output_buffer_max_mb": 512,
-        "box_hold_ms": 1000
-      },
-      "overlay": {
+        "box_hold_ms": 1000,
         "max_match_distance_fraction": 0.25
       },
       "two_stage": {

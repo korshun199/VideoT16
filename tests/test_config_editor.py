@@ -3,6 +3,7 @@
 import copy
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,9 +11,9 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QGroupBox, QLabel, QMessageBox, QSlider
+from PySide6.QtWidgets import QApplication, QComboBox, QGroupBox, QLabel, QMessageBox, QSlider
 
-from config.editor import ConfigEditorWindow, StaleConfigError, apply_defaults, build_options, list_config_files, read_config, save_config
+from config.editor import CONFIG_DIR, PROJECT_DIR, ConfigEditorWindow, StaleConfigError, apply_defaults, available_capture_modes, build_options, launcher_command, list_config_files, numeric_spec, read_config, save_config
 from config.runtime_settings import DEFAULT_SETTINGS
 
 
@@ -78,6 +79,154 @@ class ConfigEditorTests(unittest.TestCase):
         self.assertIn({"value": "models/drone.onnx", "label": "models/drone.onnx"}, options["models"])
         self.assertIn({"value": "auto", "label": "Автовыбор"}, options["cameras"])
         self.assertIn(320, options["sizes"])
+
+    def test_motion_trial_config_routes_to_separate_launcher_only_on_linux(self) -> None:
+        """Новый Linux JSON запускает lcam3, а штатные файлы и Windows не меняют маршрут."""
+        launcher, command = launcher_command(self.project_dir, "motion_trial.json", platform="posix")
+        self.assertEqual(launcher, self.project_dir / "lcam3")
+        self.assertEqual(command, [sys.executable, str(launcher)])
+
+        launcher, command = launcher_command(self.project_dir, "live_drone_profiles.json", platform="posix")
+        self.assertEqual(launcher, self.project_dir / "lcam")
+        self.assertEqual(command, [str(launcher), "--v2", "--run"])
+
+        launcher, command = launcher_command(self.project_dir, "runtime_settings.json", platform="posix")
+        self.assertEqual(launcher, self.project_dir / "lcam")
+        self.assertEqual(command, [str(launcher)])
+
+        launcher, command = launcher_command(self.project_dir, "motion_trial.json", platform="nt")
+        self.assertEqual(launcher, self.project_dir / "start.py")
+        self.assertEqual(command, [sys.executable, str(launcher)])
+
+    def test_motion_trial_menu_launches_python_entrypoint(self) -> None:
+        """Кнопка запуска выбранного JSON вызывает отдельный прототип через Python."""
+        (self.config_dir / "motion_trial.json").write_text(
+            json.dumps({"capture": {"camera_device": "auto"}}), encoding="utf-8"
+        )
+        launcher = self.project_dir / "lcam3"
+        launcher.write_text("# test entrypoint\n", encoding="utf-8")
+        self.window = ConfigEditorWindow(self.project_dir, self.config_dir)
+        self.window.file_combo.setCurrentText("motion_trial.json")
+        self.application.processEvents()
+        fake_process = Mock()
+        fake_process.poll.return_value = None
+
+        with patch("config.editor.subprocess.Popen", return_value=fake_process) as start_process:
+            self.window.launch_button.click()
+
+        self.assertEqual(start_process.call_args.args[0], [sys.executable, str(launcher)])
+
+    def test_v2_menu_opens_selected_profile_and_model_change_keeps_camera_mode(self) -> None:
+        """Открывает V2-профиль сразу и при смене модели сохраняет выбранный режим камеры."""
+        v2_path = self.config_dir / "live_drone_profiles.json"
+        v2_path.write_text(json.dumps({
+            "version": 1,
+            "profiles": {"sky": {
+                "settings": {"model": "models/first.onnx", "tile_size": 640},
+                "capture": {"width": 1280, "height": 960, "fps": 60, "buffer_size": 1},
+            }},
+        }), encoding="utf-8")
+        options = {
+            "models": [
+                {"value": "models/first.onnx", "label": "first — вход 320×320"},
+                {"value": "models/second.onnx", "label": "second — вход 640×640"},
+            ],
+            "model_input_sizes": {"models/first.onnx": 320, "models/second.onnx": 640},
+            "capture_modes": [{"width": 1280, "height": 960, "fps": 60, "label": "1280×960 @ 60 кадр/с"}],
+            "cameras": [{"value": "auto", "label": "Автовыбор"}],
+            "camera_sources": [], "pixel_formats": [], "output_devices": [],
+            "fonts": [], "positions": [], "sizes": [320, 640],
+        }
+        with patch("config.editor.build_options", return_value=options):
+            self.window = ConfigEditorWindow(self.project_dir, self.config_dir, "live_drone_profiles.json")
+            self.application.processEvents()
+
+            self.assertEqual(self.window.file_combo.currentText(), "live_drone_profiles.json")
+            model_combo = next(
+                combo for combo in self.window.findChildren(QComboBox)
+                if combo.findData("models/first.onnx") >= 0
+            )
+            model_combo.setCurrentIndex(model_combo.findData("models/second.onnx"))
+            self.application.processEvents()
+
+        profile = self.window.current_data["profiles"]["sky"]
+        self.assertEqual(profile["settings"]["model"], "models/second.onnx")
+        self.assertEqual(profile["settings"]["tile_size"], 640)
+        self.assertEqual((profile["capture"]["width"], profile["capture"]["height"], profile["capture"]["fps"]), (1280, 960, 60))
+
+    def test_v2_model_selector_does_not_offer_incompatible_current_model(self) -> None:
+        """Скрывает PT/неподтверждённые модели из V2-списка, оставляя выбор валидной ONNX."""
+        v2_path = self.config_dir / "live_drone_profiles.json"
+        v2_path.write_text(json.dumps({
+            "version": 1,
+            "profiles": {"sky": {
+                "settings": {"model": "models/legacy.pt", "tile_size": 640},
+                "capture": {"width": 1280, "height": 960, "fps": 60, "buffer_size": 1},
+            }},
+        }), encoding="utf-8")
+        options = {
+            "models": [{"value": "models/valid.onnx", "label": "valid — вход 320×320"}],
+            "model_input_sizes": {"models/valid.onnx": 320},
+            "capture_modes": [{"width": 1280, "height": 960, "fps": 60, "label": "1280×960 @ 60 кадр/с"}],
+            "cameras": [], "camera_sources": [], "pixel_formats": [], "output_devices": [],
+            "fonts": [], "positions": [], "sizes": [320, 640],
+        }
+        with patch("config.editor.build_options", return_value=options):
+            self.window = ConfigEditorWindow(self.project_dir, self.config_dir, "live_drone_profiles.json")
+            self.application.processEvents()
+
+        model_combo = next(
+            combo for combo in self.window.findChildren(QComboBox)
+            if combo.count() and combo.itemData(combo.count() - 1) == "models/valid.onnx"
+        )
+        self.assertIsNone(model_combo.currentData())
+        self.assertNotIn("models/legacy.pt", [model_combo.itemData(index) for index in range(model_combo.count())])
+
+    def test_v2_capture_mode_list_is_read_from_selected_device(self) -> None:
+        """Разбирает только форматы и FPS, которые V4L2 перечислил у камеры."""
+        output = """[0]: 'MJPG'\n  Size: Discrete 1280x720\n    Interval: Discrete 0.017s (60.000 fps)\n    Interval: Discrete 0.033s (30.000 fps)\n"""
+        with patch("config.editor.subprocess.run", return_value=Mock(returncode=0, stdout=output)) as run:
+            modes = available_capture_modes("/dev/video4")
+
+        run.assert_called_once()
+        self.assertEqual(
+            modes,
+            [
+                {"width": 1280, "height": 720, "fps": 60, "label": "1280×720 @ 60 кадр/с"},
+                {"width": 1280, "height": 720, "fps": 30, "label": "1280×720 @ 30 кадр/с"},
+            ],
+        )
+
+    def test_v2_numeric_parameters_have_safe_ranges(self) -> None:
+        """Показывает основные параметры буферизованного вывода V2 мышиными ползунками."""
+        self.assertEqual(numeric_spec("output_delay_ms", 2200), (100, 5000, 100, 1.0, " мс"))
+        self.assertEqual(numeric_spec("output_buffer_max_mb", 512), (64, 2048, 32, 1.0, " МиБ"))
+        self.assertEqual(numeric_spec("box_hold_ms", 1000), (0, 5000, 100, 1.0, " мс"))
+        self.assertEqual(numeric_spec("submission_interval_frames", 1), (1, 120, 1, 1.0, " кадр."))
+
+    def test_motion_trial_json_exposes_algorithm_values_as_mouse_controls(self) -> None:
+        """Все числовые настройки алгоритма появляются ползунками в том же окне Qt."""
+        motion_path = self.config_dir / "motion_trial.json"
+        motion_path.write_text(
+            (CONFIG_DIR / "motion_trial.json").read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        data = json.loads(motion_path.read_text(encoding="utf-8"))
+
+        def count_sliders(value: object, path: tuple[str, ...] = ()) -> int:
+            """Считает числовые настройки, которым редактор обязан дать ползунок."""
+            if isinstance(value, dict):
+                return sum(count_sliders(child, (*path, key)) for key, child in value.items())
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return int(numeric_spec(path[-1], value, path) is not None)
+            return 0
+
+        self.window = ConfigEditorWindow(self.project_dir, self.config_dir)
+        self.application.processEvents()
+
+        self.assertEqual(self.window.current_name, "motion_trial.json")
+        self.assertEqual(len(self.window.findChildren(QSlider)), count_sliders(data))
+        self.assertGreaterEqual(len(self.window.findChildren(QGroupBox)), 6)
+        self.assertFalse(self.window._is_dirty())
 
     def test_nested_sections_render_without_nested_frames(self) -> None:
         """Сохраняет структуру настроек заголовками, не вкладывая рамки друг в друга."""
