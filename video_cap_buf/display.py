@@ -349,7 +349,7 @@ class VideoWindow(QMainWindow):
         self.session.request_stop(reason)
 
     def _poll(self) -> None:
-        """Передаёт UI один ожидающий кадр и обновляет краткое состояние."""
+        """Передаёт UI кадр и закрывает окно после завершения опыта."""
         if self.interrupt_requested.is_set():
             self.close()
             return
@@ -380,7 +380,14 @@ class VideoWindow(QMainWindow):
         elif self.session.recognition_error:
             message = f"Ошибка распознавания: {self.session.recognition_error}  |  {exit_hint}"
         elif self.session.processing_finished.is_set() and self.worker.finished.is_set():
-            message = f"Пауза: показано {shown} из {captured} кадров  |  {exit_hint}"
+            self.worker.display_log.write(
+                "display_run_completed",
+                frames_displayed=shown,
+                frames_captured=captured,
+                reason=self.session.reason,
+            )
+            self.close()
+            return
         else:
             message = f"Показано {shown}  |  захвачено {captured}  |  {exit_hint}"
         if message != self._last_status_message:
@@ -432,20 +439,6 @@ def run_display(session: PipelineSession, display_log: JsonlLog) -> int:
                 with session.pair_condition:
                     session.pair_condition.notify_all()
                 worker.finished.wait()
-                if (session.reason == "duration"
-                        and not session.capture_error
-                        and not session.recognition_error
-                        and not session.display_error
-                        and not interrupt_requested.is_set()):
-                    print(
-                        f"\nПАУЗА: опыт {session.settings['duration_seconds']:g} с завершён; "
-                        f"захвачено {session.frame_count}, проверено моделью "
-                        f"{session.recognized_count}, кандидатов присутствия "
-                        f"{session.presence_frame_count}, кадров с рамкой "
-                        f"{session.localized_frame_count}, показано {session.displayed_count}. "
-                        "Окно оставлено на последнем кадре. Для выхода — Esc или крестик.",
-                        flush=True,
-                    )
 
         coordinator = threading.Thread(
             target=wait_for_pipeline,
