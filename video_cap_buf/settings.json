@@ -12,7 +12,7 @@
   "recognition_workers": 1,
   "inference_threads_per_worker": 10,
   "recognition_frame_policy": "latest",
-  "confidence_percent": 20,
+  "confidence_percent": 15,
   "presence_confidence_percent": 10,
   "nms_iou_threshold": 0.45,
   "class_names": [
@@ -29,6 +29,11 @@
     0,
     255,
     0
+  ],
+  "weak_candidate_color_bgr": [
+    255,
+    0,
+    255
   ],
   "box_thickness": 2,
   "font_scale": 0.6

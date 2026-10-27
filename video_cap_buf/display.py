@@ -145,6 +145,14 @@ class DisplayWorker(threading.Thread):
                 if pair is None:
                     break
                 frame, result = pair
+                confidence_threshold = (
+                    float(self.session.settings["confidence_percent"]) / 100.0
+                )
+                # Кандидаты ниже рабочего порога показываются отдельно для диагностики.
+                weak_candidates = tuple(
+                    item for item in result.presence_candidates
+                    if item.confidence < confidence_threshold
+                )
                 render_started_ns = time.monotonic_ns()
                 self.display_log.write(
                     "display_pair_selected",
@@ -152,6 +160,7 @@ class DisplayWorker(threading.Thread):
                     captured_ns=frame.captured_ns,
                     recognized_ns=result.recognized_ns,
                     detections=len(result.detections),
+                    weak_candidates=len(weak_candidates),
                     model_presence_candidate=bool(result.presence_candidates),
                     presence_max_confidence=max(
                         (item.confidence for item in result.presence_candidates), default=0.0
@@ -160,7 +169,9 @@ class DisplayWorker(threading.Thread):
                     result_buffer_items=self.session.display_buffer.stats()[0],
                 )
                 try:
-                    annotated = self.session.detector.annotate(frame.image, result.detections)
+                    annotated = self.session.detector.annotate(
+                        frame.image, result.detections, weak_candidates
+                    )
                     qimage = self._to_qimage(annotated)
                 except Exception as error:
                     self._fail(f"Не удалось подготовить кадр для окна: {error}", frame.number)
@@ -227,6 +238,14 @@ class DisplayWorker(threading.Thread):
                             "box": [item.left, item.top, item.right, item.bottom],
                         }
                         for item in result.detections
+                    ],
+                    weak_candidates=[
+                        {
+                            "label": item.label,
+                            "confidence": round(item.confidence, 6),
+                            "box": [item.left, item.top, item.right, item.bottom],
+                        }
+                        for item in weak_candidates
                     ],
                     remaining_source_frames=source_count,
                     remaining_source_bytes=source_bytes,

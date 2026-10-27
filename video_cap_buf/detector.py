@@ -39,6 +39,7 @@ class OpenCVDnnDetector:
         font_scale: float,
         threads: int,
         presence_confidence_percent: float | None = None,
+        weak_candidate_color_bgr: tuple[int, int, int] = (255, 0, 255),
     ) -> None:
         """Проверяет параметры и загружает модель средствами OpenCV DNN."""
         if not model_path.is_file():
@@ -68,6 +69,7 @@ class OpenCVDnnDetector:
         self.class_names = tuple(class_names)
         self.box_color_bgr = box_color_bgr
         self.text_color_bgr = text_color_bgr
+        self.weak_candidate_color_bgr = weak_candidate_color_bgr
         self.box_thickness = box_thickness
         self.font_scale = font_scale
         self.threads = threads
@@ -127,9 +129,14 @@ class OpenCVDnnDetector:
         self.net.setInput(blob)
         return self.net.forward()
 
-    def annotate(self, image: np.ndarray, detections: tuple[Detection, ...]) -> np.ndarray:
-        """Создаёт копию кадра с рамками для будущего потока отображения."""
-        return self._draw(image, detections)
+    def annotate(
+        self,
+        image: np.ndarray,
+        detections: tuple[Detection, ...],
+        weak_candidates: tuple[Detection, ...] = (),
+    ) -> np.ndarray:
+        """Создаёт копию кадра с зелёными рамками и слабыми пурпурными кандидатами."""
+        return self._draw(image, detections, weak_candidates)
 
     def process(self, image: np.ndarray) -> tuple[np.ndarray, tuple[Detection, ...], float, float]:
         """Совместимо распознаёт кадр, рисует рамки и возвращает времена этапов."""
@@ -227,29 +234,48 @@ class OpenCVDnnDetector:
         detections.sort(key=lambda item: item.confidence, reverse=True)
         return tuple(detections)
 
-    def _draw(self, image: np.ndarray, detections: tuple[Detection, ...]) -> np.ndarray:
-        """Рисует рамки и подписи на отдельной копии исходного кадра."""
+    def _draw(
+        self,
+        image: np.ndarray,
+        detections: tuple[Detection, ...],
+        weak_candidates: tuple[Detection, ...] = (),
+    ) -> np.ndarray:
+        """Рисует уверенные рамки и слабых кандидатов разными цветами."""
         annotated = image.copy()
-        for detection in detections:
-            cv2.rectangle(
-                annotated,
-                (detection.left, detection.top),
-                (detection.right, detection.bottom),
-                self.box_color_bgr,
-                self.box_thickness,
-            )
-            label = f"{detection.label} {detection.confidence * 100:.0f}%"
-            text_y = detection.top - 8 if detection.top > 24 else detection.top + 22
-            cv2.putText(
-                annotated,
-                label,
-                (detection.left, text_y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                self.font_scale,
-                self.text_color_bgr,
-                max(1, self.box_thickness),
-                cv2.LINE_AA,
-            )
+        # Слабая группа рисуется первой; уверенная рамка остаётся визуально главной.
+        drawing_groups = (
+            (
+                weak_candidates,
+                self.weak_candidate_color_bgr,
+                self.weak_candidate_color_bgr,
+                "? ",
+            ),
+            (detections, self.box_color_bgr, self.text_color_bgr, ""),
+        )
+        for group, box_color, text_color, label_prefix in drawing_groups:
+            for detection in group:
+                cv2.rectangle(
+                    annotated,
+                    (detection.left, detection.top),
+                    (detection.right, detection.bottom),
+                    box_color,
+                    self.box_thickness,
+                )
+                label = (
+                    f"{label_prefix}{detection.label} "
+                    f"{detection.confidence * 100:.0f}%"
+                )
+                text_y = detection.top - 8 if detection.top > 24 else detection.top + 22
+                cv2.putText(
+                    annotated,
+                    label,
+                    (detection.left, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    self.font_scale,
+                    text_color,
+                    max(1, self.box_thickness),
+                    cv2.LINE_AA,
+                )
         return annotated
 
 
@@ -269,6 +295,7 @@ class OnnxRuntimeDetector(OpenCVDnnDetector):
         font_scale: float,
         threads: int,
         presence_confidence_percent: float | None = None,
+        weak_candidate_color_bgr: tuple[int, int, int] = (255, 0, 255),
     ) -> None:
         """Проверяет вход модели и создаёт CPU-сессию с заданным числом потоков."""
         if not model_path.is_file():
@@ -305,6 +332,7 @@ class OnnxRuntimeDetector(OpenCVDnnDetector):
         self.class_names = tuple(class_names)
         self.box_color_bgr = box_color_bgr
         self.text_color_bgr = text_color_bgr
+        self.weak_candidate_color_bgr = weak_candidate_color_bgr
         self.box_thickness = box_thickness
         self.font_scale = font_scale
         self.threads = threads

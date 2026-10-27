@@ -346,8 +346,10 @@ def load_settings(path: Path) -> dict[str, Any]:
     if not isinstance(class_names, list) or not class_names or any(
             not isinstance(name, str) or not name.strip() for name in class_names):
         raise ValueError("class_names: требуется список названий классов модели")
-    for key in ("box_color_bgr", "text_color_bgr"):
-        color = settings.get(key)
+    for key in ("box_color_bgr", "text_color_bgr", "weak_candidate_color_bgr"):
+        color = settings.get(
+            key, [255, 0, 255] if key == "weak_candidate_color_bgr" else None
+        )
         if (not isinstance(color, list) or len(color) != 3
                 or any(isinstance(channel, bool) or not isinstance(channel, int)
                        or not 0 <= channel <= 255 for channel in color)):
@@ -905,6 +907,9 @@ def _make_detectors(settings: dict[str, Any], settings_path: Path) -> list[Any]:
             class_names=settings["class_names"],
             box_color_bgr=tuple(settings["box_color_bgr"]),
             text_color_bgr=tuple(settings["text_color_bgr"]),
+            weak_candidate_color_bgr=tuple(
+                settings.get("weak_candidate_color_bgr", [255, 0, 255])
+            ),
             box_thickness=settings["box_thickness"],
             font_scale=settings["font_scale"],
             threads=settings["inference_threads_per_worker"],
