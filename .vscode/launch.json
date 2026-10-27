@@ -1,0 +1,20 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "VideoT16: отладка захвата по кадрам",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/.venv/bin/python3",
+      "program": "${workspaceFolder}/video_cap_buf/capture.py",
+      "cwd": "${workspaceFolder}",
+      "args": ["--debug-frames", "100"],
+      "console": "integratedTerminal",
+      "stopOnEntry": false,
+      "justMyCode": true,
+      "env": {
+        "PYTHONDONTWRITEBYTECODE": "1"
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Располагаем общее окружение относительно каталога программы.
+PROGRAM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$PROGRAM_DIR")"
+PYTHON="$PROJECT_DIR/.venv/bin/python3"
+
+if [[ ! -x "$PYTHON" ]]; then
+    printf 'Ошибка: не найден Python общего окружения: %s\n' "$PYTHON" >&2
+    exit 1
+fi
+
+exec "$PYTHON" "$PROGRAM_DIR/capture.py" "$@"
