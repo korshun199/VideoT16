@@ -1,4 +1,4 @@
-"""Проверяет два штатных способа запуска VideoT16 из корневой команды lcam."""
+"""Проверяет запуск распознавания и графического редактора через lcam."""
 
 from __future__ import annotations
 
@@ -21,7 +21,12 @@ class LcamEntrypointTests(unittest.TestCase):
         self.root = Path(self.temp_dir.name)
         fake_python = self.root / ".venv" / "bin" / "python3"
         fake_python.parent.mkdir(parents=True)
-        fake_python.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n", encoding="utf-8")
+        fake_python.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = \"-c\" ]; then exit 0; fi\n"
+            "printf '%s\\n' \"$@\"\n",
+            encoding="utf-8",
+        )
         fake_python.chmod(0o755)
         self.launcher = self.root / "lcam"
         shutil.copy2(PROJECT_ROOT / "lcam", self.launcher)
@@ -49,16 +54,15 @@ class LcamEntrypointTests(unittest.TestCase):
             [str(self.root / "scripts/live_pipeline_trial.py")],
         )
 
-    def test_settings_menu_flag_is_rejected(self) -> None:
-        """Удалённый редактор не запускается через устаревший флаг --m."""
+    def test_settings_menu_flag_opens_the_native_editor(self) -> None:
+        """Флаг --m открывает визуальный редактор основного JSON-файла."""
         result = self._run("--m")
 
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("./lcam", result.stderr)
-        self.assertNotIn("config/editor.py", result.stderr)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.splitlines(), [str(self.root / "config/editor.py")])
 
     def test_other_arguments_are_rejected(self) -> None:
-        """Принимается только запуск без аргументов."""
+        """Принимаются только обычный запуск и команда редактора --m."""
         result = self._run("--v2")
 
         self.assertEqual(result.returncode, 2)

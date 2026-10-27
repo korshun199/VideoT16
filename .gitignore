@@ -22,4 +22,5 @@ dataset/my_cat/labels/train/*.txt
 dataset/my_cat/labels/val/*.txt
 dataset/objects/
 runs/
+tmp/
 .env

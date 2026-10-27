@@ -10,5 +10,15 @@ if [[ "$#" -eq 0 ]]; then
     exec "$ROOT/.venv/bin/python3" "$ROOT/scripts/live_pipeline_trial.py"
 fi
 
-printf 'Использование: ./lcam\nПараметры меняются в config/settings.json.\n' >&2
+if [[ "$#" -eq 1 && "$1" == "--m" ]]; then
+    # Открывает нативную форму редактирования того же config/settings.json.
+    if ! "$ROOT/.venv/bin/python3" -c 'import PySide6' >/dev/null 2>&1; then
+        printf 'Для редактора не установлена PySide6. Выполни:\n  %s -m pip install -r %s/requirements-editor.txt\n' \
+            "$ROOT/.venv/bin/python3" "$ROOT" >&2
+        exit 1
+    fi
+    exec "$ROOT/.venv/bin/python3" "$ROOT/config/editor.py"
+fi
+
+printf 'Использование: ./lcam       — запустить распознавание\n             ./lcam --m    — открыть редактор настроек\n' >&2
 exit 2
