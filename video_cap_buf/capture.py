@@ -58,7 +58,7 @@ class DisplayResult:
 
 
 class FrameBuffer:
-    """Хранит исходные кадры FIFO до того, как будущий вывод их использует."""
+    """Хранит кадры FIFO до завершения распознавания каждого кадра."""
 
     def __init__(self, max_bytes: int) -> None:
         """Создаёт пустой буфер исходных кадров с пределом памяти."""
@@ -175,6 +175,56 @@ class FrameBuffer:
             self._condition.notify_all()
 
 
+class LatestFrameBuffer:
+    """Хранит только самый свежий кадр для независимого плавного показа."""
+
+    def __init__(self) -> None:
+        """Создаёт однокадровый mailbox без копирования пикселей."""
+        self.frame: Frame | None = None
+        self._condition = threading.Condition()
+        self._finished = False
+
+    def publish(self, frame: Frame) -> None:
+        """Публикует ссылку на новый кадр, заменяя ещё не показанный старый."""
+        with self._condition:
+            if self._finished:
+                return
+            self.frame = frame
+            self._condition.notify_all()
+
+    def wait_after(
+        self, number: int, stop_requested: threading.Event
+    ) -> tuple[Frame | None, int]:
+        """Ждёт новый кадр и возвращает число кадров, пропущенных ради свежести."""
+        with self._condition:
+            while not stop_requested.is_set():
+                frame = self.frame
+                if frame is not None and frame.number > number:
+                    return frame, max(0, frame.number - number - 1)
+                if self._finished:
+                    return None, 0
+                self._condition.wait(timeout=0.1)
+        return None, 0
+
+    def latest(self) -> Frame | None:
+        """Возвращает последний кадр, не удаляя ссылку из mailbox."""
+        with self._condition:
+            return self.frame
+
+    def finish(self) -> None:
+        """Будит поток показа после остановки захвата."""
+        with self._condition:
+            self._finished = True
+            self._condition.notify_all()
+
+    def clear(self) -> None:
+        """Освобождает ссылку на полноразмерный кадр при завершении сеанса."""
+        with self._condition:
+            self.frame = None
+            self._finished = True
+            self._condition.notify_all()
+
+
 class DisplayBuffer:
     """Хранит компактные результаты распознавания по номеру исходного кадра."""
 
@@ -228,6 +278,20 @@ class DisplayBuffer:
         """Возвращает результаты новее уже показанного кадра."""
         with self._condition:
             return tuple(result for result in self.results if result.number > number)
+
+    def take_through(self, number: int) -> tuple[DisplayResult, ...]:
+        """Забирает готовые результаты до кадра показа и освобождает старые записи."""
+        with self._condition:
+            ready = tuple(result for result in self.results if result.number <= number)
+            if not ready:
+                return ()
+            ready_numbers = {result.number for result in ready}
+            self.results = deque(
+                result for result in self.results if result.number not in ready_numbers
+            )
+            self.bytes_estimated -= sum(self.estimate_bytes(result) for result in ready)
+            self._condition.notify_all()
+            return tuple(sorted(ready, key=lambda result: result.number))
 
     def stats(self) -> tuple[int, int]:
         """Возвращает число результатов и оценку памяти без копии FIFO."""
@@ -336,6 +400,12 @@ def validate_settings(settings: dict[str, Any]) -> None:
         raise ValueError("presence_confidence_percent не может быть выше confidence_percent")
     if settings.get("recognition_frame_policy", "all") not in ("all", "latest"):
         raise ValueError("recognition_frame_policy: допустимы all или latest")
+    box_hold_ms = settings.get("display_box_hold_ms", 250)
+    if (isinstance(box_hold_ms, bool) or not isinstance(box_hold_ms, int)
+            or not 0 <= box_hold_ms <= 2000):
+        raise ValueError("display_box_hold_ms: требуется целое число от 0 до 2000 мс")
+    if settings.get("display_scale_mode", "fit") not in ("fit", "stretch"):
+        raise ValueError("display_scale_mode: допустимы fit или stretch")
     class_names = settings.get("class_names")
     if not isinstance(class_names, list) or not class_names or any(
             not isinstance(name, str) or not name.strip() for name in class_names):
@@ -367,7 +437,7 @@ def resolve_model_path(settings: dict[str, Any], settings_path: Path) -> Path:
 
 
 class PipelineSession:
-    """Связывает параллельные потоки и хранит кадры до подтверждения их показа."""
+    """Связывает потоки захвата и распознавания с отдельным mailbox показа."""
 
     def __init__(
         self,
@@ -397,6 +467,7 @@ class PipelineSession:
         self.debug_frames = debug_frames
         self.duration_seconds = duration_seconds
         self.frame_buffer = FrameBuffer(settings["buffer_max_mb"] * 1024 * 1024)
+        self.preview_buffer = LatestFrameBuffer()
         self.display_buffer = DisplayBuffer(settings["result_buffer_max_items"])
         self.stop_requested = threading.Event()
         self.processing_finished = threading.Event()
@@ -415,6 +486,7 @@ class PipelineSession:
         self.recognition_skipped_count = 0
         self.stale_result_count = 0
         self.last_displayed_number = 0
+        self.last_recognition_result_number = 0
         self.capture_started_ns: int | None = None
         self.capture_finished_ns: int | None = None
         self.recognition_finished_ns: int | None = None
@@ -450,6 +522,7 @@ class PipelineSession:
                 self.reason = reason
         self.stop_requested.set()
         self.frame_buffer.finish()
+        self.preview_buffer.finish()
         with self.pair_condition:
             self.pair_condition.notify_all()
 
@@ -475,63 +548,6 @@ class PipelineSession:
         self.processing_finished.set()
         with self.pair_condition:
             self.pair_condition.notify_all()
-
-    def remove_displayed_pair(
-        self, number: int
-    ) -> tuple[int, int, int, int] | None:
-        """Удаляет показанную пару и устаревшие пары в режиме приоритета свежести."""
-        with self._state_lock:
-            if number <= self.last_displayed_number:
-                return None
-            with self.frame_buffer._condition:
-                with self.display_buffer._condition:
-                    frame_index = next(
-                        (index for index, frame in enumerate(self.frame_buffer.frames)
-                         if frame.number == number),
-                        None,
-                    )
-                    result_index = next(
-                        (index for index, result in enumerate(self.display_buffer.results)
-                         if result.number == number),
-                        None,
-                    )
-                    if frame_index is None or result_index is None:
-                        return None
-                    if self.recognition_frame_policy == "latest":
-                        removed_frames = [
-                            frame for frame in self.frame_buffer.frames if frame.number <= number
-                        ]
-                        removed_results = [
-                            result for result in self.display_buffer.results
-                            if result.number <= number
-                        ]
-                        self.frame_buffer.frames = deque(
-                            frame for frame in self.frame_buffer.frames if frame.number > number
-                        )
-                        self.display_buffer.results = deque(
-                            result for result in self.display_buffer.results
-                            if result.number > number
-                        )
-                    else:
-                        removed_frames = [self.frame_buffer.frames[frame_index]]
-                        removed_results = [self.display_buffer.results[result_index]]
-                        del self.frame_buffer.frames[frame_index]
-                        del self.display_buffer.results[result_index]
-                    self.frame_buffer.bytes_used -= sum(
-                        int(frame.image.nbytes) for frame in removed_frames
-                    )
-                    self.display_buffer.bytes_estimated -= sum(
-                        self.display_buffer.estimate_bytes(result) for result in removed_results
-                    )
-                    self.last_displayed_number = number
-                    self.frame_buffer._condition.notify_all()
-                    self.display_buffer._condition.notify_all()
-                    return (
-                        len(self.frame_buffer.frames),
-                        self.frame_buffer.bytes_used,
-                        len(self.display_buffer.results),
-                        self.display_buffer.bytes_estimated,
-                    )
 
     def _capture(self) -> None:
         """Читает USB-кадры, ставит им номера и сохраняет их в первом FIFO."""
@@ -599,6 +615,7 @@ class PipelineSession:
                                            frame_bytes=int(image.nbytes))
                     break
                 self.frame_count = number
+                self.preview_buffer.publish(frame)
                 last_signal_image = image
                 with self.pair_condition:
                     self.pair_condition.notify_all()
@@ -652,6 +669,7 @@ class PipelineSession:
                 if not self.reason:
                     self.reason = local_reason or "capture_stopped"
             self.frame_buffer.finish()
+            self.preview_buffer.finish()
             with self.pair_condition:
                 self.pair_condition.notify_all()
             try:
@@ -741,7 +759,7 @@ class PipelineSession:
                     detections=detections,
                 )
                 with self._state_lock:
-                    stale = frame.number <= self.last_displayed_number
+                    stale = frame.number <= self.last_recognition_result_number
                     if stale:
                         self.stale_result_count += 1
                     elif not self.display_buffer.append(result):
@@ -749,6 +767,7 @@ class PipelineSession:
                             "Буфер результатов заполнен; исходный кадр оставлен в буфере захвата"
                         )
                     else:
+                        self.last_recognition_result_number = frame.number
                         self.recognized_count += 1
                         if presence_candidates:
                             self.presence_frame_count += 1
@@ -775,11 +794,12 @@ class PipelineSession:
                     self.recognition_log.write(
                         "recognition_result_stale",
                         frame=frame.number,
-                        last_displayed_frame=self.last_displayed_number,
+                        last_recognition_result=self.last_recognition_result_number,
                         capture_to_result_ms=round(
                             (recognized_ns - frame.captured_ns) / 1_000_000, 3
                         ),
                     )
+                    self.frame_buffer.remove(frame.number)
                     del frame, result, detections, presence_candidates
                     continue
                 with self.pair_condition:
@@ -825,8 +845,9 @@ class PipelineSession:
                     source_buffer_bytes=frame_bytes,
                 )
                 frames_recognized += 1
-                # Не удерживаем ссылку рабочего потока на полный кадр,
-                # когда поток отображения уже может удалить его из FIFO.
+                # После завершённого инференса исходный кадр больше не нужен;
+                # окно имеет отдельную ссылку на только один свежий кадр.
+                self.frame_buffer.remove(frame.number)
                 del frame, result, detections, presence_candidates
         except Exception as error:
             with self._state_lock:
@@ -863,6 +884,7 @@ class PipelineSession:
             total_ms = (recognition_finished - capture_started) / 1_000_000
         result_count, result_bytes = self.display_buffer.stats()
         frame_count, frame_bytes = self.frame_buffer.stats()
+        preview_frame = self.preview_buffer.latest()
         return {
             "frames_captured": self.frame_count,
             "frames_recognized": self.recognized_count,
@@ -876,6 +898,10 @@ class PipelineSession:
             "capture_to_results_ready_ms": total_ms,
             "source_buffer_frames": frame_count,
             "source_buffer_bytes": frame_bytes,
+            "preview_frame": preview_frame.number if preview_frame is not None else None,
+            "preview_frame_bytes": (
+                int(preview_frame.image.nbytes) if preview_frame is not None else 0
+            ),
             "result_buffer_items": result_count,
             "result_buffer_estimated_bytes": result_bytes,
         }
@@ -889,6 +915,7 @@ class PipelineSession:
             if thread.is_alive():
                 thread.join()
         self.frame_buffer.clear()
+        self.preview_buffer.clear()
         self.display_buffer.clear()
 
 
@@ -1041,7 +1068,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Перед очисткой осталось в буферах: кадров={summary['source_buffer_frames']} "
               f"({summary['source_buffer_bytes'] / 1048576:.1f} МиБ), "
               f"результатов={summary['result_buffer_items']} "
-              f"({summary['result_buffer_estimated_bytes']} байт, оценка).", flush=True)
+              f"({summary['result_buffer_estimated_bytes']} байт, оценка), "
+              f"свежий кадр окна={summary['preview_frame']} "
+              f"({summary['preview_frame_bytes'] / 1048576:.1f} МиБ).", flush=True)
         if session.capture_error:
             print(f"Ошибка захвата: {session.capture_error}", file=sys.stderr)
             capture_log.write("session_failed", stage="capture", message=session.capture_error)

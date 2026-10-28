@@ -10,7 +10,6 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
-import cv2
 from PySide6.QtCore import QRect, Qt, QTimer
 from PySide6.QtGui import QColor, QImage, QKeyEvent, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (
@@ -41,7 +40,7 @@ class DisplayPacket:
 
 
 class DisplayWorker(threading.Thread):
-    """Показывает кадры по порядку, не связываясь с Qt-виджетами из фонового потока."""
+    """Показывает свежие кадры, не ожидая очередной инференс для каждого из них."""
 
     def __init__(self, session: PipelineSession, display_log: JsonlLog) -> None:
         """Создаёт поток вывода и ограниченную очередь не более одного кадра."""
@@ -54,16 +53,18 @@ class DisplayWorker(threading.Thread):
         self.next_number = 0
         self.started_ns: int | None = None
         self.finished_ns: int | None = None
+        self.last_result_number = 0
+        self.overlay_result: Any = None
 
     def request_stop(self, reason: str) -> None:
-        """Останавливает вывод и будит ожидающий пару поток."""
+        """Останавливает вывод и будит ожидающий свежий кадр поток."""
         self.stop_requested.set()
         with self.session.pair_condition:
             self.session.pair_condition.notify_all()
         self.display_log.write("display_stop_requested", reason=reason)
 
     def _fail(self, message: str, frame: int | None = None) -> None:
-        """Записывает неисправность сопоставления/рисования и останавливает конвейер."""
+        """Записывает неисправность потока показа и останавливает конвейер."""
         with self.session._state_lock:
             if self.session.display_error is None:
                 self.session.display_error = message
@@ -71,60 +72,40 @@ class DisplayWorker(threading.Thread):
         self.session.request_stop("display_error")
         self.stop_requested.set()
 
-    def _wait_for_pair(self) -> tuple[Any, Any] | None:
-        """Выбирает точную пару; в режиме latest берёт самую свежую готовую пару."""
-        missing: dict[str, Any] | None = None
-        with self.session.pair_condition:
-            while not self.stop_requested.is_set():
-                if self.session.recognition_frame_policy == "latest":
-                    candidates = sorted(
-                        self.session.display_buffer.latest_after(self.next_number),
-                        key=lambda result: result.number,
-                        reverse=True,
-                    )
-                else:
-                    expected = self.next_number + 1
-                    result = self.session.display_buffer.get(expected)
-                    candidates = [] if result is None else [result]
-
-                for result in candidates:
-                    frame = self.session.frame_buffer.get(result.number)
-                    if frame is not None:
-                        return frame, result
-
-                if self.session.processing_finished.is_set():
-                    if self.session.recognition_frame_policy == "latest":
-                        return None
-                    if expected > self.session.frame_count:
-                        return None
-                    missing_frame = self.session.frame_buffer.get(expected)
-                    missing_result = self.session.display_buffer.get(expected)
-                    missing = {
-                        "frame": expected,
-                        "source_frame_present": missing_frame is not None,
-                        "recognition_result_present": missing_result is not None,
-                    }
-                    break
-                self.session.pair_condition.wait(timeout=0.1)
-        if missing is not None:
-            self._fail(
-                "После завершения распознавания не найдена полная пара буферов",
-                frame=int(missing["frame"]),
+    def _wait_for_frame(self) -> tuple[Any, int, bool] | None:
+        """Ждёт свежий видеокадр и после конца потока позволяет обновить финальный оверлей."""
+        while not self.stop_requested.is_set():
+            frame, skipped = self.session.preview_buffer.wait_after(
+                self.next_number, self.stop_requested
             )
-            self.display_log.write("display_pair_missing", **missing)
+            if frame is not None:
+                return frame, skipped, False
+            if self.stop_requested.is_set():
+                return None
+            if self.session.processing_finished.is_set():
+                final_frame = self.session.preview_buffer.latest()
+                if final_frame is None:
+                    return None
+                pending = self.session.display_buffer.latest_after(self.last_result_number)
+                if any(result.number <= final_frame.number for result in pending):
+                    return final_frame, 0, True
+                return None
+            # Распознавание может завершиться позже захвата; координатор
+            # разбудит нас после результата и после окончательного завершения.
+            with self.session.pair_condition:
+                self.session.pair_condition.wait(timeout=0.1)
         return None
 
     @staticmethod
     def _to_qimage(bgr_image: Any) -> Any:
-        """Создаёт независимую копию QImage из размеченного кадра BGR."""
-        rgb_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
-        height, width = rgb_image.shape[:2]
+        """Копирует BGR-кадр в QImage без лишнего преобразования цветового порядка."""
+        height, width = bgr_image.shape[:2]
         return QImage(
-            rgb_image.data,
+            bgr_image.data,
             width,
             height,
-            int(rgb_image.strides[0]),
-            QImage.Format.Format_RGB888,
+            int(bgr_image.strides[0]),
+            QImage.Format.Format_BGR888,
         ).copy()
 
     def _offer_to_window(self, packet: DisplayPacket) -> bool:
@@ -144,42 +125,73 @@ class DisplayWorker(threading.Thread):
         return packet.acknowledged.is_set() and packet.displayed
 
     def run(self) -> None:
-        """Готовит кадры по порядку и освобождает пару только после показа окном."""
+        """Показывает каждый доступный свежий кадр с последним ещё актуальным результатом."""
         self.started_ns = time.monotonic_ns()
         shown = 0
         self.display_log.write("display_started", started_ns=self.started_ns)
         try:
             while not self.stop_requested.is_set():
-                pair = self._wait_for_pair()
-                if pair is None:
+                selected = self._wait_for_frame()
+                if selected is None:
                     break
-                frame, result = pair
+                frame, skipped_frames, final_refresh = selected
+                result_updates = self.session.display_buffer.take_through(frame.number)
+                for result in result_updates:
+                    if result.number > self.last_result_number:
+                        self.last_result_number = result.number
+                    # Пустой результат не обрывает рамку резко: последняя
+                    # положительная находка живёт только заданное число мс.
+                    if result.detections or result.presence_candidates:
+                        self.overlay_result = result
                 confidence_threshold = (
                     float(self.session.settings["confidence_percent"]) / 100.0
                 )
+                hold_ns = int(self.session.settings.get("display_box_hold_ms", 250)) * 1_000_000
+                overlay_age_ns = (
+                    frame.captured_ns - self.overlay_result.captured_ns
+                    if self.overlay_result is not None
+                    else None
+                )
+                overlay_is_fresh = (
+                    overlay_age_ns is not None and 0 <= overlay_age_ns <= hold_ns
+                )
+                overlay_result = self.overlay_result if overlay_is_fresh else None
                 # Кандидаты ниже рабочего порога показываются отдельно для диагностики.
                 weak_candidates = tuple(
-                    item for item in result.presence_candidates
+                    item for item in (overlay_result.presence_candidates if overlay_result else ())
                     if item.confidence < confidence_threshold
                 )
+                detections = overlay_result.detections if overlay_result else ()
                 render_started_ns = time.monotonic_ns()
                 self.display_log.write(
-                    "display_pair_selected",
+                    "display_frame_selected",
                     frame=frame.number,
                     captured_ns=frame.captured_ns,
-                    recognized_ns=result.recognized_ns,
-                    detections=len(result.detections),
+                    recognition_frame=(overlay_result.number if overlay_result else None),
+                    recognition_age_ms=(
+                        round(overlay_age_ns / 1_000_000, 3)
+                        if overlay_age_ns is not None else None
+                    ),
+                    result_updates=len(result_updates),
+                    final_refresh=final_refresh,
+                    detections=len(detections),
                     weak_candidates=len(weak_candidates),
-                    model_presence_candidate=bool(result.presence_candidates),
+                    model_presence_candidate=bool(
+                        overlay_result and overlay_result.presence_candidates
+                    ),
                     presence_max_confidence=max(
-                        (item.confidence for item in result.presence_candidates), default=0.0
+                        (
+                            item.confidence
+                            for item in (overlay_result.presence_candidates if overlay_result else ())
+                        ),
+                        default=0.0,
                     ),
                     source_buffer_frames=self.session.frame_buffer.stats()[0],
                     result_buffer_items=self.session.display_buffer.stats()[0],
                 )
                 try:
                     annotated = self.session.detector.annotate(
-                        frame.image, result.detections, weak_candidates
+                        frame.image, detections, weak_candidates
                     )
                     qimage = self._to_qimage(annotated)
                 except Exception as error:
@@ -191,6 +203,11 @@ class DisplayWorker(threading.Thread):
                 self.display_log.write(
                     "display_frame_ready",
                     frame=frame.number,
+                    recognition_frame=(overlay_result.number if overlay_result else None),
+                    recognition_age_ms=(
+                        round(overlay_age_ns / 1_000_000, 3)
+                        if overlay_age_ns is not None else None
+                    ),
                     draw_and_convert_ms=round((prepared_ns - render_started_ns) / 1_000_000, 3),
                     capture_to_ready_ms=round((prepared_ns - frame.captured_ns) / 1_000_000, 3),
                     image_width=qimage.width(),
@@ -207,38 +224,51 @@ class DisplayWorker(threading.Thread):
                     break
 
                 presented_ns = packet.presented_ns or time.monotonic_ns()
-                removed = self.session.remove_displayed_pair(frame.number)
-                if removed is None:
-                    self._fail("Показанный кадр потерял пару в буферах до удаления", frame.number)
-                    break
-                source_count, source_bytes, result_count, result_bytes = removed
                 shown += 1
                 previous_number = self.next_number
-                self.next_number = frame.number
+                self.next_number = max(self.next_number, frame.number)
                 with self.session._state_lock:
                     self.session.displayed_count = shown
+                    self.session.last_displayed_number = max(
+                        self.session.last_displayed_number, frame.number
+                    )
                 if frame.number > previous_number + 1:
                     self.display_log.write(
                         "display_frames_skipped",
                         after_frame=previous_number,
                         before_frame=frame.number,
-                        count=frame.number - previous_number - 1,
-                        reason="freshest_ready_result",
+                        count=skipped_frames,
+                        reason="freshest_capture_frame",
                     )
                 self.display_log.write(
                     "frame_displayed",
                     frame=frame.number,
                     captured_ns=frame.captured_ns,
-                    recognized_ns=result.recognized_ns,
+                    recognition_frame=(overlay_result.number if overlay_result else None),
+                    recognized_ns=(overlay_result.recognized_ns if overlay_result else None),
+                    recognition_age_ms=(
+                        round(overlay_age_ns / 1_000_000, 3)
+                        if overlay_age_ns is not None else None
+                    ),
+                    box_hold_active=overlay_is_fresh,
                     display_prepared_ns=prepared_ns,
                     display_presented_ns=presented_ns,
                     capture_to_present_ms=round((presented_ns - frame.captured_ns) / 1_000_000, 3),
-                    recognition_to_present_ms=round((presented_ns - result.recognized_ns) / 1_000_000, 3),
+                    recognition_to_present_ms=(
+                        round((presented_ns - overlay_result.recognized_ns) / 1_000_000, 3)
+                        if overlay_result is not None else None
+                    ),
                     render_ms=round((prepared_ns - render_started_ns) / 1_000_000, 3),
                     ui_wait_ms=round((presented_ns - prepared_ns) / 1_000_000, 3),
-                    model_presence_candidate=bool(result.presence_candidates),
+                    model_presence_candidate=bool(
+                        overlay_result and overlay_result.presence_candidates
+                    ),
                     presence_max_confidence=max(
-                        (item.confidence for item in result.presence_candidates), default=0.0
+                        (
+                            item.confidence
+                            for item in (overlay_result.presence_candidates if overlay_result else ())
+                        ),
+                        default=0.0,
                     ),
                     detections=[
                         {
@@ -246,7 +276,7 @@ class DisplayWorker(threading.Thread):
                             "confidence": round(item.confidence, 6),
                             "box": [item.left, item.top, item.right, item.bottom],
                         }
-                        for item in result.detections
+                        for item in detections
                     ],
                     weak_candidates=[
                         {
@@ -256,12 +286,12 @@ class DisplayWorker(threading.Thread):
                         }
                         for item in weak_candidates
                     ],
-                    remaining_source_frames=source_count,
-                    remaining_source_bytes=source_bytes,
-                    remaining_result_items=result_count,
-                    remaining_result_estimated_bytes=result_bytes,
+                    skipped_capture_frames=skipped_frames,
+                    pending_source_frames=self.session.frame_buffer.stats()[0],
+                    pending_result_items=self.session.display_buffer.stats()[0],
+                    final_refresh=final_refresh,
                 )
-                del frame, result, annotated, qimage, packet, pair
+                del frame, result_updates, annotated, qimage, packet, selected
         except Exception as error:
             self._fail(f"Неожиданная ошибка потока отображения: {error}")
         finally:
@@ -308,7 +338,7 @@ class VideoView(QWidget):
         self._pending_packet = None
 
     def paintEvent(self, event: Any) -> None:
-        """Растягивает кадр на всю область видео и подтверждает его оконный показ."""
+        """Показывает кадр с выбранным масштабированием и сглаженной интерполяцией."""
         del event
         painter = QPainter(self)
         packet = self._pending_packet
@@ -318,8 +348,19 @@ class VideoView(QWidget):
                 raise RuntimeError("Qt не смог начать отрисовку виджета")
             painter.fillRect(self.rect(), QColor(0, 0, 0))
             if self._image is not None and not self.rect().isEmpty():
-                # Заполняем видимую область целиком, чтобы 4:3 кадр занял широкий экран.
-                target = self.rect()
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+                if self.window().property("scaleMode") == "stretch":
+                    target = self.rect()
+                else:
+                    fitted = self._image.size().scaled(
+                        self.size(), Qt.AspectRatioMode.KeepAspectRatio
+                    )
+                    target = QRect(
+                        (self.width() - fitted.width()) // 2,
+                        (self.height() - fitted.height()) // 2,
+                        fitted.width(),
+                        fitted.height(),
+                    )
                 painter.drawImage(target, self._image)
                 painted = self.isVisible() and target.width() > 0 and target.height() > 0
         except Exception as error:
@@ -502,6 +543,7 @@ class VideoWindow(QMainWindow):
         self.worker = worker
         self.interrupt_requested = interrupt_requested
         self.setWindowTitle("VideoT16 — параллельный захват, распознавание и показ")
+        self.setProperty("scaleMode", session.settings.get("display_scale_mode", "fit"))
         self.viewer = VideoView()
         self.system_metrics = SystemMetricsMonitor()
         self.info_panel = SystemInfoPanel()
@@ -600,7 +642,7 @@ class VideoWindow(QMainWindow):
 
 
 def run_display(session: PipelineSession, display_log: JsonlLog) -> int:
-    """Параллельно запускает конвейер и показывает готовые совпавшие кадры."""
+    """Параллельно запускает конвейер и показывает свежие кадры с оверлеем."""
     application = QApplication.instance() or QApplication([])
     application.setApplicationName("VideoT16")
     application.setQuitOnLastWindowClosed(True)

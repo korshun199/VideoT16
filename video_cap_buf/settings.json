@@ -1,8 +1,8 @@
 {
   "source": "/dev/v4l/by-id/usb-UltraSemi_USB3_Video_73908951-video-index0",
-  "width": 1280,
-  "height": 960,
-  "fps": 20,
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
   "pixel_format": "YUYV",
   "buffer_max_mb": 256,
   "model_path": "../models/anti_uav_fast_320_int8_pc.onnx",
@@ -35,5 +35,7 @@
     255
   ],
   "box_thickness": 2,
-  "font_scale": 0.6
+  "font_scale": 0.6,
+  "display_box_hold_ms": 250,
+  "display_scale_mode": "fit"
 }
