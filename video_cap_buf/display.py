@@ -308,7 +308,7 @@ class VideoView(QWidget):
         self._pending_packet = None
 
     def paintEvent(self, event: Any) -> None:
-        """Рисует вписанный по пропорциям кадр и подтверждает его оконный показ."""
+        """Растягивает кадр на всю область видео и подтверждает его оконный показ."""
         del event
         painter = QPainter(self)
         packet = self._pending_packet
@@ -318,10 +318,9 @@ class VideoView(QWidget):
                 raise RuntimeError("Qt не смог начать отрисовку виджета")
             painter.fillRect(self.rect(), QColor(0, 0, 0))
             if self._image is not None and not self.rect().isEmpty():
-                target = self._image.size().scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio)
-                x = (self.width() - target.width()) // 2
-                y = (self.height() - target.height()) // 2
-                painter.drawImage(QRect(x, y, target.width(), target.height()), self._image)
+                # Заполняем видимую область целиком, чтобы 4:3 кадр занял широкий экран.
+                target = self.rect()
+                painter.drawImage(target, self._image)
                 painted = self.isVisible() and target.width() > 0 and target.height() > 0
         except Exception as error:
             if packet is not None:
