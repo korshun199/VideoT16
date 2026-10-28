@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from queue import Empty, Full, Queue
+from pathlib import Path
 import signal
 import threading
 import time
@@ -12,7 +13,15 @@ from typing import TYPE_CHECKING, Any
 import cv2
 from PySide6.QtCore import QRect, Qt, QTimer
 from PySide6.QtGui import QColor, QImage, QKeyEvent, QKeySequence, QPainter, QShortcut
-from PySide6.QtWidgets import QApplication, QMainWindow, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QVBoxLayout,
+    QWidget,
+)
 
 if TYPE_CHECKING:
     from capture import JsonlLog, PipelineSession
@@ -333,6 +342,152 @@ class VideoView(QWidget):
             return
         super().keyPressEvent(event)
 
+
+class SystemMetricsMonitor:
+    """Собирает общую загрузку CPU и температуру процессора без внешних библиотек."""
+
+    def __init__(self) -> None:
+        """Запоминает начальные счётчики CPU для расчёта загрузки между опросами."""
+        self._previous_cpu: tuple[int, int] | None = None
+
+    @staticmethod
+    def _read_cpu_counters() -> tuple[int, int] | None:
+        """Читает суммарные счётчики всех ядер из Linux `/proc/stat`."""
+        try:
+            first_line = Path("/proc/stat").read_text(encoding="ascii").splitlines()[0]
+            fields = first_line.split()
+            if not fields or fields[0] != "cpu":
+                return None
+            counters = [int(value) for value in fields[1:]]
+        except (OSError, IndexError, ValueError):
+            return None
+        if len(counters) < 5:
+            return None
+        total = sum(counters)
+        idle = counters[3] + counters[4]
+        return total, idle
+
+    @staticmethod
+    def _temperature_value(raw_value: str) -> float | None:
+        """Преобразует sysfs температуру из тысячных долей градуса в Celsius."""
+        try:
+            value = int(raw_value.strip()) / 1000.0
+        except ValueError:
+            return None
+        return value if -20.0 <= value <= 150.0 else None
+
+    @classmethod
+    def _read_cpu_temperature(cls) -> float | None:
+        """Находит датчик CPU, предпочитая пакетный датчик и CPU-зоны."""
+        thermal_root = Path("/sys/class/thermal")
+        preferred_types = ("x86_pkg_temp", "TCPU", "cpu-thermal", "cpu_thermal")
+        zones: list[tuple[int, Path]] = []
+        try:
+            for type_path in thermal_root.glob("thermal_zone*/type"):
+                try:
+                    sensor_type = type_path.read_text(encoding="ascii").strip()
+                except OSError:
+                    continue
+                if sensor_type in preferred_types:
+                    zones.append((preferred_types.index(sensor_type), type_path.parent / "temp"))
+        except OSError:
+            zones = []
+
+        for _, temperature_path in sorted(zones, key=lambda item: item[0]):
+            try:
+                value = cls._temperature_value(temperature_path.read_text(encoding="ascii"))
+            except OSError:
+                continue
+            if value is not None:
+                return value
+
+        # На системах без thermal_zone датчик CPU часто доступен через hwmon.
+        hwmon_root = Path("/sys/class/hwmon")
+        try:
+            for name_path in hwmon_root.glob("hwmon*/name"):
+                try:
+                    sensor_name = name_path.read_text(encoding="ascii").strip().lower()
+                except OSError:
+                    continue
+                if sensor_name not in {"coretemp", "k10temp", "cpu_thermal", "cpu-thermal"}:
+                    continue
+                readings = sorted(name_path.parent.glob("temp*_input"))
+                for reading_path in readings:
+                    try:
+                        value = cls._temperature_value(reading_path.read_text(encoding="ascii"))
+                    except OSError:
+                        continue
+                    if value is not None:
+                        return value
+        except OSError:
+            pass
+        return None
+
+    def snapshot(self) -> tuple[str, str]:
+        """Возвращает текущие CPU и температуру в коротком виде для панели."""
+        current_cpu = self._read_cpu_counters()
+        cpu_text = "--.-%"
+        if current_cpu is not None:
+            if self._previous_cpu is not None:
+                total_delta = current_cpu[0] - self._previous_cpu[0]
+                idle_delta = current_cpu[1] - self._previous_cpu[1]
+                if total_delta > 0:
+                    busy_percent = max(0.0, min(100.0, 100.0 * (1.0 - idle_delta / total_delta)))
+                    cpu_text = f"{busy_percent:.1f}%"
+            self._previous_cpu = current_cpu
+
+        temperature = self._read_cpu_temperature()
+        temperature_text = "--.-°C" if temperature is None else f"{temperature:.1f}°C"
+        return cpu_text, temperature_text
+
+
+class SystemInfoPanel(QFrame):
+    """Показывает заметную нижнюю полосу с телеметрией и счётчиками кадров."""
+
+    def __init__(self) -> None:
+        """Создаёт компактные поля CPU, температуры, захвата и показа."""
+        super().__init__()
+        self.setObjectName("systemInfoPanel")
+        self.setFixedHeight(48)
+        self.setStyleSheet(
+            "QFrame#systemInfoPanel { background: #252a30; border-top: 1px solid #48515b; }"
+            "QLabel { color: #e3e8ee; background: transparent; border: 0;"
+            " font-family: 'DejaVu Sans Mono', monospace; font-size: 13px;"
+            " font-weight: 600; padding: 0 8px; }"
+            "QLabel#cpuMetric { color: #69e58b; font-size: 15px; }"
+            "QLabel#temperatureMetric { color: #ffd166; font-size: 15px; }"
+        )
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 0, 12, 0)
+        layout.setSpacing(18)
+
+        self.cpu_label = QLabel("CPU --.-%")
+        self.cpu_label.setObjectName("cpuMetric")
+        self.temperature_label = QLabel("ТЕМП --.-°C")
+        self.temperature_label.setObjectName("temperatureMetric")
+        self.captured_label = QLabel("ЗАХВАЧЕНО 0")
+        self.displayed_label = QLabel("ПОКАЗАНО 0")
+
+        layout.addWidget(self.cpu_label)
+        layout.addWidget(self.temperature_label)
+        layout.addStretch(1)
+        layout.addWidget(self.captured_label)
+        layout.addWidget(self.displayed_label)
+
+    def update_values(
+        self,
+        cpu_text: str,
+        temperature_text: str,
+        captured: int,
+        displayed: int,
+    ) -> None:
+        """Обновляет системные показатели и счётчики кадров в панели."""
+        self.cpu_label.setText(f"CPU {cpu_text}")
+        self.temperature_label.setText(f"ТЕМП {temperature_text}")
+        self.captured_label.setText(f"ЗАХВАЧЕНО {captured}")
+        self.displayed_label.setText(f"ПОКАЗАНО {displayed}")
+
+
 class VideoWindow(QMainWindow):
     """Отвечает за максимизированное окно, приём готовых изображений и Esc."""
 
@@ -349,7 +504,15 @@ class VideoWindow(QMainWindow):
         self.interrupt_requested = interrupt_requested
         self.setWindowTitle("VideoT16 — параллельный захват, распознавание и показ")
         self.viewer = VideoView()
-        self.setCentralWidget(self.viewer)
+        self.system_metrics = SystemMetricsMonitor()
+        self.info_panel = SystemInfoPanel()
+        central_widget = QWidget(self)
+        central_layout = QVBoxLayout(central_widget)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self.viewer, 1)
+        central_layout.addWidget(self.info_panel, 0)
+        self.setCentralWidget(central_widget)
         self._escape_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
         self._escape_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
         self._escape_shortcut.setAutoRepeat(False)
@@ -360,6 +523,21 @@ class VideoWindow(QMainWindow):
         self._timer.setInterval(10)
         self._timer.timeout.connect(self._poll)
         self._timer.start()
+        self._metrics_timer = QTimer(self)
+        self._metrics_timer.setInterval(1000)
+        self._metrics_timer.timeout.connect(self._update_info_panel)
+        self._metrics_timer.start()
+        self._update_info_panel()
+
+    def _update_info_panel(self) -> None:
+        """Обновляет CPU и температуру раз в секунду, не трогая видеопотоки."""
+        cpu_text, temperature_text = self.system_metrics.snapshot()
+        self.info_panel.update_values(
+            cpu_text,
+            temperature_text,
+            self.session.frame_count,
+            self.session.displayed_count,
+        )
 
     def _stop_pipeline(self) -> None:
         """Останавливает конвейер при закрытии окна пользователем."""
@@ -408,7 +586,7 @@ class VideoWindow(QMainWindow):
             self.close()
             return
         else:
-            message = f"Показано {shown}  |  захвачено {captured}  |  {exit_hint}"
+            message = exit_hint
         if message != self._last_status_message:
             self.statusBar().showMessage(message)
             self._last_status_message = message
@@ -416,6 +594,7 @@ class VideoWindow(QMainWindow):
     def closeEvent(self, event: Any) -> None:
         """Останавливает конвейер и подтверждает закрытие окна просмотра."""
         self._timer.stop()
+        self._metrics_timer.stop()
         self.viewer.abort_pending()
         self._stop_pipeline()
         super().closeEvent(event)

@@ -296,10 +296,8 @@ def frame_signal_stats(image: Any) -> dict[str, float | int]:
     }
 
 
-def load_settings(path: Path) -> dict[str, Any]:
-    """Читает настройки и проверяет параметры до загрузки модели и камеры."""
-    with path.open("r", encoding="utf-8") as file:
-        settings = json.load(file)
+def validate_settings(settings: dict[str, Any]) -> None:
+    """Проверяет настройки конвейера до запуска камеры или модели."""
     if not isinstance(settings, dict):
         raise ValueError("Настройки должны быть объектом JSON")
 
@@ -312,10 +310,6 @@ def load_settings(path: Path) -> dict[str, Any]:
         value = settings.get(key)
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError(f"{key}: требуется положительное целое число")
-    duration = settings.get("duration_seconds")
-    if (isinstance(duration, bool) or not isinstance(duration, (int, float))
-            or not math.isfinite(duration) or duration <= 0):
-        raise ValueError("duration_seconds: требуется положительное число")
     pixel_format = settings.get("pixel_format")
     if not isinstance(pixel_format, str) or len(pixel_format) != 4 or not pixel_format.isascii():
         raise ValueError("pixel_format: требуется четырёхсимвольный код, например YUYV")
@@ -354,6 +348,13 @@ def load_settings(path: Path) -> dict[str, Any]:
                 or any(isinstance(channel, bool) or not isinstance(channel, int)
                        or not 0 <= channel <= 255 for channel in color)):
             raise ValueError(f"{key}: укажите три целых компонента BGR от 0 до 255")
+
+
+def load_settings(path: Path) -> dict[str, Any]:
+    """Читает JSON и применяет общую проверку для GUI и обычного запуска."""
+    with path.open("r", encoding="utf-8") as file:
+        settings = json.load(file)
+    validate_settings(settings)
     return settings
 
 
@@ -376,8 +377,9 @@ class PipelineSession:
         detectors: list[Any] | Any,
         capture_factory: Callable[..., Any] = cv2.VideoCapture,
         debug_frames: int | None = None,
+        duration_seconds: float | None = None,
     ) -> None:
-        """Создаёт буферы и сигналы координации, не открывая камеру."""
+        """Создаёт буферы и сигналы; длительность задаётся только CLI-параметром."""
         self.settings = settings
         self.recognition_frame_policy = settings.get("recognition_frame_policy", "all")
         self.capture_log = capture_log
@@ -393,6 +395,7 @@ class PipelineSession:
         self.detector = self.detectors[0]
         self.capture_factory = capture_factory
         self.debug_frames = debug_frames
+        self.duration_seconds = duration_seconds
         self.frame_buffer = FrameBuffer(settings["buffer_max_mb"] * 1024 * 1024)
         self.display_buffer = DisplayBuffer(settings["result_buffer_max_items"])
         self.stop_requested = threading.Event()
@@ -561,7 +564,8 @@ class PipelineSession:
             signal_interval = max(1, int(round(measured_fps)))
             self.capture_log.write("capture_started", requested=self.settings,
                                    accepted=accepted, actual=actual,
-                                   debug_frames=self.debug_frames)
+                                   debug_frames=self.debug_frames,
+                                   duration_seconds=self.duration_seconds)
             print(f"Захват: {actual['width']:.0f}×{actual['height']:.0f}, "
                   f"{actual['fps']:.1f} FPS, {actual['pixel_format']}", flush=True)
 
@@ -571,9 +575,10 @@ class PipelineSession:
                 read_started_ns = time.monotonic_ns()
                 if self.capture_started_ns is None:
                     self.capture_started_ns = read_started_ns
-                    deadline_ns = read_started_ns + int(
-                        self.settings["duration_seconds"] * 1_000_000_000
-                    )
+                    if self.duration_seconds is not None:
+                        deadline_ns = read_started_ns + int(
+                            self.duration_seconds * 1_000_000_000
+                        )
                 elif self.debug_frames is None and deadline_ns is not None \
                         and read_started_ns >= deadline_ns:
                     local_reason = "duration"
@@ -664,7 +669,7 @@ class PipelineSession:
                 pass
             if self.reason == "duration":
                 print(
-                    f"\nЗахват {self.settings['duration_seconds']:g} с завершён: "
+                    f"\nЗахват {self.duration_seconds:g} с завершён: "
                     f"{self.frame_count} кадров. Дожидаюсь распознавания и показа…",
                     flush=True,
                 )
@@ -944,8 +949,6 @@ def main(argv: list[str] | None = None) -> int:
     display_log: JsonlLog | None = None
     try:
         settings = load_settings(args.settings)
-        if args.duration is not None:
-            settings["duration_seconds"] = args.duration
         if args.workers is not None:
             settings["recognition_workers"] = args.workers
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -984,6 +987,7 @@ def main(argv: list[str] | None = None) -> int:
         recognition_log,
         detectors,
         debug_frames=args.debug_frames,
+        duration_seconds=args.duration,
     )
     print(f"Журнал захвата: {capture_log.path}", flush=True)
     print(f"Журнал распознавания: {recognition_log.path}", flush=True)
@@ -1002,8 +1006,14 @@ def main(argv: list[str] | None = None) -> int:
         f"рамка от {settings['confidence_percent']:g}%.",
         flush=True,
     )
-    duration_note = " (разовый параметр; settings.json не изменён)" if args.duration else ""
-    print(f"Длительность захвата: {settings['duration_seconds']:g} с{duration_note}", flush=True)
+    if args.duration is None:
+        print("Длительность захвата: без ограничения (остановка Esc или Ctrl+C)", flush=True)
+    else:
+        print(
+            f"Длительность захвата: {args.duration:g} с "
+            "(разовый параметр; settings.json не изменён)",
+            flush=True,
+        )
     if args.workers is not None:
         print(
             f"Число распознавателей: {settings['recognition_workers']} "

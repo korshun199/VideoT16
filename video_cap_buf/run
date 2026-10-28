@@ -11,4 +11,24 @@ if [[ ! -x "$PYTHON" ]]; then
     exit 1
 fi
 
+if [[ "${1:-}" == "--m" ]]; then
+    shift
+    exec "$PYTHON" "$PROGRAM_DIR/editor.py" "$@"
+fi
+
+# Ограничиваем вычислительные потоки числом доступных логических CPU.
+if command -v taskset >/dev/null 2>&1; then
+    # Читаем рабочие потоки из настроек и выбираем столько доступных CPU.
+    CPU_PLAN="$("$PYTHON" -c 'import json,os,sys; s=json.load(open(sys.argv[1], encoding="utf-8")); cpus=sorted(os.sched_getaffinity(0)); n=max(1, int(s["recognition_workers"]) * int(s["inference_threads_per_worker"])); chosen=cpus[:min(n, len(cpus))]; print(str(len(chosen)) + ":" + ",".join(map(str, chosen)))' "$PROGRAM_DIR/settings.json")"
+    CPU_COUNT="${CPU_PLAN%%:*}"
+    CPU_LIST="${CPU_PLAN#*:}"
+    if [[ "$CPU_COUNT" =~ ^[1-9][0-9]*$ && "$CPU_LIST" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+        printf 'Распознавание ограничено %s логическими CPU (%s); ноутбуку оставлены остальные.\n' "$CPU_COUNT" "$CPU_LIST"
+        exec taskset --cpu-list "$CPU_LIST" "$PYTHON" "$PROGRAM_DIR/capture.py" "$@"
+    fi
+    printf 'Предупреждение: не удалось определить CPU по настройкам; запускаю без жёсткого ограничения.\n' >&2
+else
+    printf 'Предупреждение: taskset не найден; запускаю без жёсткого ограничения CPU.\n' >&2
+fi
+
 exec "$PYTHON" "$PROGRAM_DIR/capture.py" "$@"
