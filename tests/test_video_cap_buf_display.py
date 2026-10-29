@@ -16,9 +16,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "video_cap_buf"))
 import cv2
 import numpy as np
 
-from capture import Frame, LatestFrameBuffer, PipelineSession, validate_settings
+from capture import DelayedFrameBuffer, DisplayResult, Frame, LatestFrameBuffer, PipelineSession, validate_settings
 from detector import Detection
-from display import DisplayWorker, run_display
+from display import DisplayWorker, _select_overlay, run_display
 from editor import FIELD_SPECS
 
 
@@ -73,24 +73,28 @@ class SyntheticCapture:
 
 
 class SlowSyntheticDetector:
-    """Имитирует более медленное распознавание и возвращает одну рамку."""
+    """Имитирует медленное распознавание движущегося объекта."""
 
     def __init__(self) -> None:
-        """Готовит стабильную детекцию внутри тестового кадра."""
-        self.detection = Detection(0, "drone", 0.9, 20, 20, 60, 60)
+        """Готовит список ошибок положения рамки относительно тестового объекта."""
+        self.position_errors: list[int] = []
 
-    def detect_with_presence(self, _image: np.ndarray):
+    def detect_with_presence(self, image: np.ndarray):
         """Задерживает инференс, чтобы показать разницу частот видео и модели."""
+        position = int(image[0, 0, 0])
         time.sleep(0.07)
-        return (self.detection,), (self.detection,), 70.0
+        detection = Detection(0, "drone", 0.9, 20 + position, 20, 60 + position, 60)
+        return (detection,), (detection,), 70.0
 
     def annotate(
         self,
         image: np.ndarray,
-        _detections: tuple[Detection, ...],
+        detections: tuple[Detection, ...],
         _weak_candidates: tuple[Detection, ...] = (),
     ) -> np.ndarray:
-        """Возвращает отдельное изображение и не изменяет кадр камеры."""
+        """Проверяет рамку относительно положения в изображении и возвращает копию."""
+        expected_left = 20 + int(image[0, 0, 0])
+        self.position_errors.extend(abs(item.left - expected_left) for item in detections)
         return image.copy()
 
 
@@ -111,6 +115,78 @@ class LatestFrameBufferTests(unittest.TestCase):
         self.assertIs(frame, newest)
         self.assertEqual(skipped, 3)
         self.assertIs(mailbox.latest(), newest)
+
+    def test_delayed_buffer_is_bounded_and_catches_up(self) -> None:
+        """Ограниченный буфер не накапливает запоздавшие изображения."""
+        image = np.zeros((2, 2, 3), np.uint8)
+        buffer = DelayedFrameBuffer(image.nbytes * 2, 200_000_000)
+        now = time.monotonic_ns()
+        for number in (1, 2, 3):
+            buffer.publish(Frame(number, image, "t", now - 1_000_000_000, now - 1_000_000_000))
+        self.assertEqual(buffer.stats(), (2, image.nbytes * 2))
+
+        frame, skipped = buffer.wait_after(0, threading.Event())
+
+        self.assertEqual(frame.number, 3)
+        self.assertEqual(skipped, 2)
+        buffer.clear()
+        self.assertEqual(buffer.stats(), (0, 0))
+
+    def test_delayed_buffer_reports_insufficient_memory(self) -> None:
+        """Слишком маленький буфер сообщает ошибку, а не зависает без кадров."""
+        image = np.zeros((2, 2, 3), np.uint8)
+        buffer = DelayedFrameBuffer(image.nbytes, 10_000_000_000)
+        now = time.monotonic_ns()
+        buffer.publish(Frame(1, image, "t", now, now))
+        with self.assertRaisesRegex(RuntimeError, "Буфер показа мал"):
+            buffer.publish(Frame(2, image, "t", now, now))
+        buffer.clear()
+
+    def test_delayed_buffer_observes_delay_and_stop(self) -> None:
+        """Кадр выходит после заданной задержки, а остановка не ждёт новый кадр."""
+        image = np.zeros((2, 2, 3), np.uint8)
+        buffer = DelayedFrameBuffer(1024, 40_000_000)
+        now = time.monotonic_ns()
+        buffer.publish(Frame(1, image, "t", now, now))
+        frame, _ = buffer.wait_after(0, threading.Event())
+        self.assertEqual(frame.number, 1)
+        self.assertGreaterEqual(time.monotonic_ns() - now, 40_000_000)
+        stopped = threading.Event()
+        stopped.set()
+        self.assertEqual(buffer.wait_after(1, stopped), (None, 0))
+        buffer.clear()
+
+    def test_overlay_matches_frame_and_interpolates_between_observations(self) -> None:
+        """Рамка на промежуточном кадре опирается на два соседних наблюдения."""
+        first_box = Detection(0, "drone", 0.9, 10, 10, 30, 30)
+        next_box = Detection(0, "drone", 0.8, 20, 10, 40, 30)
+        first = DisplayResult(1, 1_000_000_000, 1_100_000_000, 100.0, (first_box,), (first_box,))
+        last = DisplayResult(5, 1_400_000_000, 1_500_000_000, 100.0, (next_box,), (next_box,))
+        image = np.zeros((2, 2, 3), np.uint8)
+        middle = Frame(3, image, "t", 0, 1_200_000_000)
+
+        detections, weak, mode, anchors = _select_overlay(middle, first, last, 0.2, 250_000_000, 0.1)
+
+        self.assertEqual(mode, "interpolated")
+        self.assertEqual(anchors, (1, 5))
+        self.assertEqual(weak, ())
+        self.assertEqual((detections[0].left, detections[0].right), (15, 35))
+        self.assertEqual(_select_overlay(middle, first, last, 0.2, 250_000_000, 0.5)[2], "none")
+        exact = Frame(1, image, "t", 0, 1_000_000_000)
+        exact_boxes, _, exact_mode, exact_anchors = _select_overlay(exact, first, last, 0.2, 250_000_000, 0.1)
+        self.assertEqual((exact_mode, exact_anchors, exact_boxes), ("exact", (1,), (first_box,)))
+
+    def test_overlay_does_not_carry_detection_through_a_miss(self) -> None:
+        """Пустое наблюдение или чрезмерный промежуток не создают ложную рамку."""
+        box = Detection(0, "drone", 0.9, 10, 10, 30, 30)
+        first = DisplayResult(1, 1_000_000_000, 1_100_000_000, 100.0, (box,), (box,))
+        miss = DisplayResult(5, 1_400_000_000, 1_500_000_000, 100.0, (), ())
+        frame = Frame(3, np.zeros((2, 2, 3), np.uint8), "t", 0, 1_200_000_000)
+
+        self.assertEqual(_select_overlay(frame, first, miss, 0.2, 250_000_000, 0.1)[2], "none")
+        self.assertEqual(_select_overlay(frame, first, None, 0.2, 250_000_000, 0.1)[2], "none")
+        far = DisplayResult(5, 2_000_000_000, 2_100_000_000, 100.0, (box,), (box,))
+        self.assertEqual(_select_overlay(frame, first, far, 0.2, 250_000_000, 0.1)[2], "none")
 
     def test_settings_reject_an_unbounded_box_hold(self) -> None:
         """Время удержания рамки остаётся ограниченным конфигурацией."""
@@ -185,15 +261,17 @@ class SmoothDisplayPipelineTests(unittest.TestCase):
             "box_thickness": 1,
             "font_scale": 0.5,
             "display_box_hold_ms": 500,
+            "display_delay_ms": 200,
             "display_scale_mode": "fit",
         }
         capture_log = MemoryLog()
         display_log = MemoryLog()
+        detector = SlowSyntheticDetector()
         session = PipelineSession(
             settings,
             capture_log,
             MemoryLog(),
-            SlowSyntheticDetector(),
+            detector,
             capture_factory=SyntheticCapture,
             duration_seconds=0.25,
         )
@@ -205,10 +283,21 @@ class SmoothDisplayPipelineTests(unittest.TestCase):
             self.assertGreater(session.frame_count, 8)
             self.assertGreater(session.displayed_count, session.recognized_count)
             self.assertTrue(any(item.get("recognition_frame") is not None for item in shown))
+            exact = [item for item in shown if item.get("overlay_mode") == "exact"]
+            interpolated = [item for item in shown if item.get("overlay_mode") == "interpolated"]
+            self.assertTrue(exact, "Результаты должны попадать на свои кадры")
+            self.assertTrue(interpolated, "Между находками должны показываться промежуточные кадры")
+            self.assertTrue(all(item["overlay_anchors"] == (item["frame"],) for item in exact))
+            self.assertTrue(all(item["overlay_anchors"][0] < item["frame"] < item["overlay_anchors"][1]
+                                for item in interpolated))
+            self.assertTrue(detector.position_errors)
+            self.assertLessEqual(max(detector.position_errors), 2)
             self.assertTrue(all("capture_to_present_ms" in item for item in shown))
             self.assertEqual(session.frame_buffer.stats(), (0, 0))
         finally:
             session.close()
+        self.assertEqual(session.preview_buffer.stats(), (0, 0))
+        self.assertIsNone(session.preview_buffer.latest())
 
 
 if __name__ == "__main__":

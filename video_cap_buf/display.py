@@ -10,6 +10,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from detector import Detection
 from PySide6.QtCore import QRect, Qt, QTimer
 from PySide6.QtGui import QColor, QImage, QKeyEvent, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (
@@ -26,6 +27,63 @@ if TYPE_CHECKING:
     from capture import JsonlLog, PipelineSession
 
 
+def _box_iou(first: Detection, second: Detection) -> float:
+    """Оценивает перекрытие двух рамок для осторожного сопоставления."""
+    width = max(0, min(first.right, second.right) - max(first.left, second.left))
+    height = max(0, min(first.bottom, second.bottom) - max(first.top, second.top))
+    overlap = width * height
+    first_area = max(0, first.right - first.left) * max(0, first.bottom - first.top)
+    second_area = max(0, second.right - second.left) * max(0, second.bottom - second.top)
+    union = first_area + second_area - overlap
+    return overlap / union if union else 0.0
+
+
+def _select_overlay(
+    frame: Any, previous: Any, following: Any, confidence_threshold: float,
+    max_distance_ns: int, match_iou_threshold: float
+) -> tuple[tuple[Detection, ...], tuple[Detection, ...], str, tuple[int, ...]]:
+    """Выбирает точный результат или интерполирует между двумя близкими находками."""
+    if previous is None:
+        return (), (), "none", ()
+    if previous.number == frame.number:
+        weak = tuple(item for item in previous.presence_candidates
+                     if item.confidence < confidence_threshold)
+        return previous.detections, weak, "exact", (previous.number,)
+    if (following is None or max_distance_ns <= 0
+            or not previous.number < frame.number < following.number
+            or not previous.captured_ns < frame.captured_ns < following.captured_ns
+            or frame.captured_ns - previous.captured_ns > max_distance_ns
+            or following.captured_ns - frame.captured_ns > max_distance_ns):
+        return (), (), "none", ()
+
+    span_ns = following.captured_ns - previous.captured_ns
+    fraction = (frame.captured_ns - previous.captured_ns) / span_ns
+    available = list(following.presence_candidates)
+    interpolated: list[Detection] = []
+    for first in previous.presence_candidates:
+        candidates = [(index, _box_iou(first, second)) for index, second in enumerate(available)
+                      if first.class_id == second.class_id]
+        if not candidates:
+            continue
+        index, overlap = max(candidates, key=lambda item: item[1])
+        if overlap < match_iou_threshold:
+            continue
+        second = available.pop(index)
+        def coordinate(start: int, end: int) -> int:
+            """Вычисляет координату рамки на промежуточном кадре."""
+            return round(start + (end - start) * fraction)
+        interpolated.append(Detection(
+            first.class_id, f"~{first.label}", min(first.confidence, second.confidence),
+            coordinate(first.left, second.left), coordinate(first.top, second.top),
+            coordinate(first.right, second.right), coordinate(first.bottom, second.bottom),
+        ))
+    if not interpolated:
+        return (), (), "none", ()
+    detections = tuple(item for item in interpolated if item.confidence >= confidence_threshold)
+    weak = tuple(item for item in interpolated if item.confidence < confidence_threshold)
+    return detections, weak, "interpolated", (previous.number, following.number)
+
+
 @dataclass
 class DisplayPacket:
     """Передаёт готовый QImage оконному потоку и получает подтверждение показа."""
@@ -40,7 +98,7 @@ class DisplayPacket:
 
 
 class DisplayWorker(threading.Thread):
-    """Показывает свежие кадры, не ожидая очередной инференс для каждого из них."""
+    """Показывает буферизованные кадры с результатом для соответствующего времени."""
 
     def __init__(self, session: PipelineSession, display_log: JsonlLog) -> None:
         """Создаёт поток вывода и ограниченную очередь не более одного кадра."""
@@ -73,7 +131,7 @@ class DisplayWorker(threading.Thread):
         self.stop_requested.set()
 
     def _wait_for_frame(self) -> tuple[Any, int, bool] | None:
-        """Ждёт свежий видеокадр и после конца потока позволяет обновить финальный оверлей."""
+        """Ждёт созревший кадр и после конца потока допускает финальное обновление."""
         while not self.stop_requested.is_set():
             frame, skipped = self.session.preview_buffer.wait_after(
                 self.next_number, self.stop_requested
@@ -125,7 +183,7 @@ class DisplayWorker(threading.Thread):
         return packet.acknowledged.is_set() and packet.displayed
 
     def run(self) -> None:
-        """Показывает каждый доступный свежий кадр с последним ещё актуальным результатом."""
+        """Показывает кадры с точной или безопасно интерполированной рамкой."""
         self.started_ns = time.monotonic_ns()
         shown = 0
         self.display_log.write("display_started", started_ns=self.started_ns)
@@ -135,42 +193,60 @@ class DisplayWorker(threading.Thread):
                 if selected is None:
                     break
                 frame, skipped_frames, final_refresh = selected
-                result_updates = self.session.display_buffer.take_through(frame.number)
-                for result in result_updates:
-                    if result.number > self.last_result_number:
-                        self.last_result_number = result.number
-                    # Пустой результат не обрывает рамку резко: последняя
-                    # положительная находка живёт только заданное число мс.
-                    if result.detections or result.presence_candidates:
-                        self.overlay_result = result
                 confidence_threshold = (
                     float(self.session.settings["confidence_percent"]) / 100.0
                 )
+                result_updates = self.session.display_buffer.take_through(frame.number)
+                for result in result_updates:
+                    if result.number <= self.next_number:
+                        self.display_log.write(
+                            "recognition_result_late",
+                            recognition_frame=result.number,
+                            last_displayed_frame=self.next_number,
+                            detections=len(result.detections),
+                            weak_candidates=sum(
+                                item.confidence < confidence_threshold
+                                for item in result.presence_candidates
+                            ),
+                        )
+                    if result.number > self.last_result_number:
+                        self.last_result_number = result.number
+                    # Пустая проверка тоже важна: нельзя переносить рамку через промах.
+                    self.overlay_result = result
                 hold_ns = int(self.session.settings.get("display_box_hold_ms", 250)) * 1_000_000
+                future_results, _ = self.session.display_buffer.snapshot()
+                future = next((item for item in future_results if item.number > frame.number), None)
+                detections, weak_candidates, overlay_mode, anchors = _select_overlay(
+                    frame, self.overlay_result, future, confidence_threshold, hold_ns,
+                    float(self.session.settings.get("display_match_iou_threshold", 0.1)),
+                )
+                overlay_result = self.overlay_result if anchors else None
+                overlay_is_fresh = bool(detections or weak_candidates)
                 overlay_age_ns = (
-                    frame.captured_ns - self.overlay_result.captured_ns
-                    if self.overlay_result is not None
+                    frame.captured_ns - overlay_result.captured_ns
+                    if overlay_result is not None
                     else None
                 )
-                overlay_is_fresh = (
-                    overlay_age_ns is not None and 0 <= overlay_age_ns <= hold_ns
+                hold_age_ns = (
+                    time.monotonic_ns() - overlay_result.recognized_ns
+                    if overlay_result is not None else None
                 )
-                overlay_result = self.overlay_result if overlay_is_fresh else None
-                # Кандидаты ниже рабочего порога показываются отдельно для диагностики.
-                weak_candidates = tuple(
-                    item for item in (overlay_result.presence_candidates if overlay_result else ())
-                    if item.confidence < confidence_threshold
-                )
-                detections = overlay_result.detections if overlay_result else ()
+                delayed_frames, delayed_bytes = self.session.preview_buffer.stats()
                 render_started_ns = time.monotonic_ns()
                 self.display_log.write(
                     "display_frame_selected",
                     frame=frame.number,
                     captured_ns=frame.captured_ns,
                     recognition_frame=(overlay_result.number if overlay_result else None),
+                    overlay_mode=overlay_mode,
+                    overlay_anchors=anchors,
                     recognition_age_ms=(
                         round(overlay_age_ns / 1_000_000, 3)
                         if overlay_age_ns is not None else None
+                    ),
+                    box_hold_age_ms=(
+                        round(hold_age_ns / 1_000_000, 3)
+                        if hold_age_ns is not None else None
                     ),
                     result_updates=len(result_updates),
                     final_refresh=final_refresh,
@@ -188,6 +264,8 @@ class DisplayWorker(threading.Thread):
                     ),
                     source_buffer_frames=self.session.frame_buffer.stats()[0],
                     result_buffer_items=self.session.display_buffer.stats()[0],
+                    delayed_buffer_frames=delayed_frames,
+                    delayed_buffer_bytes=delayed_bytes,
                 )
                 try:
                     annotated = self.session.detector.annotate(
@@ -204,9 +282,15 @@ class DisplayWorker(threading.Thread):
                     "display_frame_ready",
                     frame=frame.number,
                     recognition_frame=(overlay_result.number if overlay_result else None),
+                    overlay_mode=overlay_mode,
+                    overlay_anchors=anchors,
                     recognition_age_ms=(
                         round(overlay_age_ns / 1_000_000, 3)
                         if overlay_age_ns is not None else None
+                    ),
+                    box_hold_age_ms=(
+                        round(hold_age_ns / 1_000_000, 3)
+                        if hold_age_ns is not None else None
                     ),
                     draw_and_convert_ms=round((prepared_ns - render_started_ns) / 1_000_000, 3),
                     capture_to_ready_ms=round((prepared_ns - frame.captured_ns) / 1_000_000, 3),
@@ -238,17 +322,24 @@ class DisplayWorker(threading.Thread):
                         after_frame=previous_number,
                         before_frame=frame.number,
                         count=skipped_frames,
-                        reason="freshest_capture_frame",
+                        reason="delayed_display_catch_up",
                     )
+                delayed_frames, delayed_bytes = self.session.preview_buffer.stats()
                 self.display_log.write(
                     "frame_displayed",
                     frame=frame.number,
                     captured_ns=frame.captured_ns,
                     recognition_frame=(overlay_result.number if overlay_result else None),
+                    overlay_mode=overlay_mode,
+                    overlay_anchors=anchors,
                     recognized_ns=(overlay_result.recognized_ns if overlay_result else None),
                     recognition_age_ms=(
                         round(overlay_age_ns / 1_000_000, 3)
                         if overlay_age_ns is not None else None
+                    ),
+                    box_hold_age_ms=(
+                        round(hold_age_ns / 1_000_000, 3)
+                        if hold_age_ns is not None else None
                     ),
                     box_hold_active=overlay_is_fresh,
                     display_prepared_ns=prepared_ns,
@@ -258,6 +349,12 @@ class DisplayWorker(threading.Thread):
                         round((presented_ns - overlay_result.recognized_ns) / 1_000_000, 3)
                         if overlay_result is not None else None
                     ),
+                    overlay_source_to_present_ms=(
+                        round((presented_ns - overlay_result.captured_ns) / 1_000_000, 3)
+                        if overlay_result is not None else None
+                    ),
+                    delayed_buffer_frames=delayed_frames,
+                    delayed_buffer_bytes=delayed_bytes,
                     render_ms=round((prepared_ns - render_started_ns) / 1_000_000, 3),
                     ui_wait_ms=round((presented_ns - prepared_ns) / 1_000_000, 3),
                     model_presence_candidate=bool(
@@ -642,7 +739,7 @@ class VideoWindow(QMainWindow):
 
 
 def run_display(session: PipelineSession, display_log: JsonlLog) -> int:
-    """Параллельно запускает конвейер и показывает свежие кадры с оверлеем."""
+    """Параллельно запускает конвейер и показывает задержанные кадры с рамками."""
     application = QApplication.instance() or QApplication([])
     application.setApplicationName("VideoT16")
     application.setQuitOnLastWindowClosed(True)

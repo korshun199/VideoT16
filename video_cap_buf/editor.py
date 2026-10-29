@@ -119,15 +119,55 @@ FIELD_SPECS = (
               "Толщина линий рамок на исходном кадре.", "1–20 пикселей.", 1, 20),
     FieldSpec("font_scale", "Рамка и подпись", "Размер подписи", "float",
               "Масштаб шрифта подписи OpenCV.", "Больше 0 и не более 10.", 0.05, 10, 2, 0.05),
-    FieldSpec("display_box_hold_ms", "Отображение", "Удержание рамки", "int",
-              "Сколько максимум держать последнюю найденную рамку, пока распознаватель проверяет новые кадры.",
-              "0–2000 мс; 0 отключает удержание.", 0, 2000, step=25),
+    FieldSpec("display_box_hold_ms", "Отображение", "Интервал сопоставления рамки", "int",
+              "Максимальное расстояние по времени от текущего кадра до каждого из двух найденных положений для интерполяции.",
+              "0–2000 мс; 0 оставляет только точно распознанные кадры.", 0, 2000, step=25),
+    FieldSpec("display_delay_ms", "Отображение", "Задержка видео", "int",
+              "На сколько задержать видео, чтобы распознавание успело обработать исходные кадры.",
+              "0–5000 мс; большее значение требует больше памяти.", 0, 5000, step=50),
+    FieldSpec("display_match_iou_threshold", "Отображение", "Совпадение рамок", "float",
+              "Минимальное перекрытие рамок одного класса для интерполяции между обнаружениями.",
+              "0,01–1; выше — строже сопоставление.", 0.01, 1, 2, 0.01),
+    FieldSpec("display_buffer_max_mb", "Отображение", "Память буфера показа", "int",
+              "Предел памяти буфера задержанных кадров; задаётся отдельно от буфера распознавания.",
+              "1–16384 МиБ; должно хватать на задержку видео.", 1, 16384, step=32),
     FieldSpec("display_scale_mode", "Отображение", "Масштаб кадра", "enum",
               "fit сохраняет пропорции и может оставить чёрные поля; stretch заполняет экран, но искажает пропорции.",
               "fit или stretch.", choices=(("fit", "fit — без искажения"), ("stretch", "stretch — заполнить экран"))),
 )
 
 GROUP_ORDER = ("Видео", "Распознавание", "Рамка и подпись", "Отображение")
+
+# Рекомендуемый профиль для проверенного USB-оцифровщика и этой ONNX-модели.
+# Источник USB намеренно не задаётся: путь к устройству отличается на компьютерах.
+DEFAULT_SETTINGS = {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "pixel_format": "YUYV",
+    "buffer_max_mb": 256,
+    "model_path": "../models/anti_uav_fast_320_int8_pc.onnx",
+    "inference_size": 320,
+    "inference_backend": "onnxruntime",
+    "recognition_workers": 1,
+    "inference_threads_per_worker": 4,
+    "recognition_frame_policy": "latest",
+    "confidence_percent": 14.0,
+    "presence_confidence_percent": 10.0,
+    "nms_iou_threshold": 0.45,
+    "class_names": ["copter_drone", "motor_drone"],
+    "result_buffer_max_items": 10000,
+    "box_color_bgr": [0, 255, 0],
+    "text_color_bgr": [0, 255, 0],
+    "weak_candidate_color_bgr": [255, 0, 255],
+    "box_thickness": 2,
+    "font_scale": 0.6,
+    "display_box_hold_ms": 250,
+    "display_match_iou_threshold": 0.1,
+    "display_delay_ms": 600,
+    "display_buffer_max_mb": 256,
+    "display_scale_mode": "fit",
+}
 
 
 class SettingsDocument:
@@ -259,6 +299,12 @@ class SettingsEditor(QMainWindow):
         self.status_label.setObjectName("statusLabel")
         outer.addWidget(self.status_label)
         actions = QHBoxLayout()
+        self.defaults_button = QPushButton("По умолчанию")
+        self.defaults_button.setToolTip(
+            "Применить рекомендуемый профиль; USB-источник останется прежним"
+        )
+        self.defaults_button.clicked.connect(self._apply_defaults)
+        actions.addWidget(self.defaults_button)
         actions.addStretch(1)
         self.save_button = QPushButton("Сохранить")
         self.save_button.setEnabled(False)
@@ -430,6 +476,22 @@ class SettingsEditor(QMainWindow):
         changed = self.working_document != self.store.document
         self.status_label.setText("Есть несохранённые изменения" if changed else "Изменений нет")
         self.save_button.setEnabled(changed)
+
+    def _apply_defaults(self) -> None:
+        """Применяет рекомендуемый профиль, не меняя USB-путь и не записывая файл."""
+        self._collect()
+        # Путь устройства индивидуален для компьютера, поэтому оставляем его текущим.
+        source = self.working_document["source"]
+        self.working_document.update(deepcopy(DEFAULT_SETTINGS))
+        self.working_document["source"] = source
+        self._render_fields()
+        self._mark_modified()
+        if self.working_document == self.store.document:
+            self.status_label.setText("Рекомендуемый профиль уже установлен; файл не менялся")
+        else:
+            self.status_label.setText(
+                "Профиль применён к форме; нажмите «Сохранить» или «Запуск» для записи"
+            )
 
     def _show_help(self, spec: FieldSpec) -> None:
         """Открывает подсказку со смыслом поля и текущим значением."""

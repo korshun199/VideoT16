@@ -225,6 +225,100 @@ class LatestFrameBuffer:
             self._condition.notify_all()
 
 
+class DelayedFrameBuffer:
+    """Ограниченный буфер показа, удерживающий кадры заданное время."""
+
+    def __init__(self, max_bytes: int, delay_ns: int) -> None:
+        """Проверяет предел памяти и создаёт очередь кадров для окна."""
+        if max_bytes <= 0 or delay_ns < 0:
+            raise ValueError("Буфер показа: неверный предел памяти или задержка")
+        self.max_bytes = max_bytes
+        self.delay_ns = delay_ns
+        self.frames: deque[Frame] = deque()
+        self.bytes_used = 0
+        self._latest: Frame | None = None
+        self._finished = False
+        self._condition = threading.Condition()
+
+    def publish(self, frame: Frame) -> int:
+        """Добавляет кадр; при отставании окна удаляет только уже созревшие кадры."""
+        frame_bytes = int(frame.image.nbytes)
+        if frame_bytes <= 0 or frame_bytes > self.max_bytes:
+            raise ValueError("Кадр не помещается в ограниченный буфер показа")
+        dropped = 0
+        with self._condition:
+            if self._finished:
+                return 0
+            now_ns = time.monotonic_ns()
+            while self.frames and self.bytes_used + frame_bytes > self.max_bytes:
+                if self.frames[0].captured_ns + self.delay_ns > now_ns:
+                    raise RuntimeError(
+                        "Буфер показа мал для заданной задержки: увеличьте "
+                        "display_buffer_max_mb или уменьшите display_delay_ms"
+                    )
+                old = self.frames.popleft()
+                self.bytes_used -= int(old.image.nbytes)
+                dropped += 1
+            self.frames.append(frame)
+            self.bytes_used += frame_bytes
+            self._latest = frame
+            self._condition.notify_all()
+        return dropped
+
+    def wait_after(
+        self, number: int, stop_requested: threading.Event
+    ) -> tuple[Frame | None, int]:
+        """Ждёт созревший кадр, пропуская только устаревшие при отставании окна."""
+        with self._condition:
+            while not stop_requested.is_set():
+                while self.frames and self.frames[0].number <= number:
+                    old = self.frames.popleft()
+                    self.bytes_used -= int(old.image.nbytes)
+                if self.frames:
+                    now_ns = time.monotonic_ns()
+                    ready_ns = self.frames[0].captured_ns + self.delay_ns
+                    if now_ns >= ready_ns:
+                        while (len(self.frames) > 1
+                               and self.frames[1].captured_ns + self.delay_ns <= now_ns):
+                            old = self.frames.popleft()
+                            self.bytes_used -= int(old.image.nbytes)
+                        frame = self.frames.popleft()
+                        self.bytes_used -= int(frame.image.nbytes)
+                        return frame, max(0, frame.number - number - 1)
+                    timeout = min((ready_ns - now_ns) / 1_000_000_000, 0.1)
+                    self._condition.wait(timeout=timeout)
+                elif self._finished:
+                    return None, 0
+                else:
+                    self._condition.wait(timeout=0.1)
+        return None, 0
+
+    def latest(self) -> Frame | None:
+        """Возвращает последний принятый кадр для завершения опыта."""
+        with self._condition:
+            return self._latest
+
+    def stats(self) -> tuple[int, int]:
+        """Возвращает число удерживаемых кадров и занимаемый объём."""
+        with self._condition:
+            return len(self.frames), self.bytes_used
+
+    def finish(self) -> None:
+        """Сообщает, что новых кадров больше не будет."""
+        with self._condition:
+            self._finished = True
+            self._condition.notify_all()
+
+    def clear(self) -> None:
+        """Освобождает кадры и последнюю ссылку при завершении сеанса."""
+        with self._condition:
+            self.frames.clear()
+            self._latest = None
+            self.bytes_used = 0
+            self._finished = True
+            self._condition.notify_all()
+
+
 class DisplayBuffer:
     """Хранит компактные результаты распознавания по номеру исходного кадра."""
 
@@ -394,6 +488,10 @@ def validate_settings(settings: dict[str, Any]) -> None:
                 or not math.isfinite(value) or not low <= value <= high
                 or (key == "font_scale" and value == 0)):
             raise ValueError(f"{key}: значение вне допустимого диапазона {low}..{high}")
+    match_iou = settings.get("display_match_iou_threshold", 0.1)
+    if (isinstance(match_iou, bool) or not isinstance(match_iou, (int, float))
+            or not math.isfinite(match_iou) or not 0.01 <= match_iou <= 1):
+        raise ValueError("display_match_iou_threshold: требуется число от 0.01 до 1")
     if settings.get("presence_confidence_percent", settings["confidence_percent"]) > settings[
         "confidence_percent"
     ]:
@@ -404,6 +502,14 @@ def validate_settings(settings: dict[str, Any]) -> None:
     if (isinstance(box_hold_ms, bool) or not isinstance(box_hold_ms, int)
             or not 0 <= box_hold_ms <= 2000):
         raise ValueError("display_box_hold_ms: требуется целое число от 0 до 2000 мс")
+    display_delay_ms = settings.get("display_delay_ms", 0)
+    if (isinstance(display_delay_ms, bool) or not isinstance(display_delay_ms, int)
+            or not 0 <= display_delay_ms <= 5000):
+        raise ValueError("display_delay_ms: требуется целое число от 0 до 5000 мс")
+    display_buffer_mb = settings.get("display_buffer_max_mb", settings["buffer_max_mb"])
+    if (isinstance(display_buffer_mb, bool) or not isinstance(display_buffer_mb, int)
+            or not 1 <= display_buffer_mb <= 16384):
+        raise ValueError("display_buffer_max_mb: требуется целое число от 1 до 16384 МиБ")
     if settings.get("display_scale_mode", "fit") not in ("fit", "stretch"):
         raise ValueError("display_scale_mode: допустимы fit или stretch")
     class_names = settings.get("class_names")
@@ -437,7 +543,7 @@ def resolve_model_path(settings: dict[str, Any], settings_path: Path) -> Path:
 
 
 class PipelineSession:
-    """Связывает потоки захвата и распознавания с отдельным mailbox показа."""
+    """Связывает захват и распознавание с ограниченным буфером показа."""
 
     def __init__(
         self,
@@ -467,7 +573,10 @@ class PipelineSession:
         self.debug_frames = debug_frames
         self.duration_seconds = duration_seconds
         self.frame_buffer = FrameBuffer(settings["buffer_max_mb"] * 1024 * 1024)
-        self.preview_buffer = LatestFrameBuffer()
+        self.preview_buffer = DelayedFrameBuffer(
+            settings.get("display_buffer_max_mb", settings["buffer_max_mb"]) * 1024 * 1024,
+            settings.get("display_delay_ms", 0) * 1_000_000,
+        )
         self.display_buffer = DisplayBuffer(settings["result_buffer_max_items"])
         self.stop_requested = threading.Event()
         self.processing_finished = threading.Event()
@@ -615,7 +724,11 @@ class PipelineSession:
                                            frame_bytes=int(image.nbytes))
                     break
                 self.frame_count = number
-                self.preview_buffer.publish(frame)
+                preview_dropped = self.preview_buffer.publish(frame)
+                if preview_dropped:
+                    self.capture_log.write(
+                        "display_buffer_overflow", frame=number, dropped=preview_dropped
+                    )
                 last_signal_image = image
                 with self.pair_condition:
                     self.pair_condition.notify_all()
@@ -919,9 +1032,18 @@ class PipelineSession:
         self.display_buffer.clear()
 
 
-def _format_ms(value: float | int | None) -> str:
-    """Форматирует измерение, помечая отсутствие кадров как «нет данных»."""
-    return "нет данных" if value is None else f"{value / 1000:.3f} с"
+def _print_console_summary(summary: dict[str, float | int | None]) -> None:
+    """Печатает короткие счётчики опыта, не загромождая терминал замерами."""
+    print(
+        f"Захвачено: {summary['frames_captured']}; "
+        f"проверено моделью: {summary['frames_recognized']}; "
+        f"кандидат присутствия: {summary['frames_with_presence_candidate']}; "
+        f"рамка: {summary['frames_with_box']}; "
+        f"пропущено ради свежести: {summary['frames_skipped']}; "
+        f"показано: {summary['frames_displayed']}; "
+        f"устаревших результатов отброшено: {summary['stale_results']}",
+        flush=True,
+    )
 
 
 def _make_detectors(settings: dict[str, Any], settings_path: Path) -> list[Any]:
@@ -1053,24 +1175,7 @@ def main(argv: list[str] | None = None) -> int:
 
         exit_code = run_display(session, display_log)
         summary = session.timing_summary()
-        print(f"Захвачено: {summary['frames_captured']}; "
-              f"проверено моделью: {summary['frames_recognized']}; "
-              f"кандидат присутствия: {summary['frames_with_presence_candidate']}; "
-              f"рамка: {summary['frames_with_box']}; "
-              f"пропущено ради свежести: {summary['frames_skipped']}; "
-              f"показано: {summary['frames_displayed']}; "
-              f"устаревших результатов отброшено: {summary['stale_results']}", flush=True)
-        print(f"Время захвата: {_format_ms(summary['capture_ms'])}; "
-              f"после захвата до готовности результатов: "
-              f"{_format_ms(summary['post_capture_drain_ms'])}; "
-              f"всего до готовности: {_format_ms(summary['capture_to_results_ready_ms'])}",
-              flush=True)
-        print(f"Перед очисткой осталось в буферах: кадров={summary['source_buffer_frames']} "
-              f"({summary['source_buffer_bytes'] / 1048576:.1f} МиБ), "
-              f"результатов={summary['result_buffer_items']} "
-              f"({summary['result_buffer_estimated_bytes']} байт, оценка), "
-              f"свежий кадр окна={summary['preview_frame']} "
-              f"({summary['preview_frame_bytes'] / 1048576:.1f} МиБ).", flush=True)
+        _print_console_summary(summary)
         if session.capture_error:
             print(f"Ошибка захвата: {session.capture_error}", file=sys.stderr)
             capture_log.write("session_failed", stage="capture", message=session.capture_error)

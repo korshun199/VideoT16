@@ -11,7 +11,7 @@
   "recognition_workers": 1,
   "inference_threads_per_worker": 4,
   "recognition_frame_policy": "latest",
-  "confidence_percent": 14.0,
+  "confidence_percent": 10.0,
   "presence_confidence_percent": 10.0,
   "nms_iou_threshold": 0.45,
   "class_names": [
@@ -37,5 +37,8 @@
   "box_thickness": 2,
   "font_scale": 0.6,
   "display_box_hold_ms": 250,
+  "display_match_iou_threshold": 0.1,
+  "display_delay_ms": 600,
+  "display_buffer_max_mb": 256,
   "display_scale_mode": "fit"
 }
