@@ -11,8 +11,8 @@
   "recognition_workers": 1,
   "inference_threads_per_worker": 4,
   "recognition_frame_policy": "latest",
-  "confidence_percent": 10.0,
-  "presence_confidence_percent": 10.0,
+  "confidence_percent": 8.0,
+  "presence_confidence_percent": 5.0,
   "nms_iou_threshold": 0.45,
   "class_names": [
     "copter_drone",
