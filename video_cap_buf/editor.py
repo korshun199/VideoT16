@@ -103,6 +103,10 @@ FIELD_SPECS = (
     FieldSpec("presence_confidence_percent", "Распознавание", "Порог пурпурного кандидата", "float",
               "Нижний порог сигнала модели. Между ним и порогом рамки рисуется пурпурный кандидат с вопросительным знаком.",
               "0–порог зелёной рамки.", 0, 100, 1, 1),
+    FieldSpec("air_osd_filter", "Распознавание", "Надпись AIR в OSD", "enum",
+              "Убирает рамку только при совпадении с образцом AIR вверху кадра. Дрон, закрывающий надпись, может быть пропущен.",
+              "on — включён, off — выключен; другой шрифт может не совпасть.",
+              choices=(("on", "Включён"), ("off", "Выключен"))),
     FieldSpec("nms_iou_threshold", "Распознавание", "Подавление дублей", "float",
               "Перекрытие, при котором похожие рамки модели считаются дублями.", "0–1.", 0, 1, 2, 0.01),
     FieldSpec("class_names", "Распознавание", "Названия классов", "list",
@@ -154,6 +158,7 @@ DEFAULT_SETTINGS = {
     "recognition_frame_policy": "latest",
     "confidence_percent": 14.0,
     "presence_confidence_percent": 10.0,
+    "air_osd_filter": "on",
     "nms_iou_threshold": 0.45,
     "class_names": ["copter_drone", "motor_drone"],
     "result_buffer_max_items": 10000,
@@ -272,6 +277,7 @@ class SettingsEditor(QMainWindow):
         self.store = store
         self.runtime_args = runtime_args
         self.working_document = deepcopy(store.document)
+        self.working_document.setdefault("air_osd_filter", "off")
         self.field_widgets: dict[str, QWidget] = {}
         self._refreshing = False
         self.run_requested = False

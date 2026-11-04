@@ -13,6 +13,7 @@
   "recognition_frame_policy": "latest",
   "confidence_percent": 8.0,
   "presence_confidence_percent": 5.0,
+  "air_osd_filter": "on",
   "nms_iou_threshold": 0.45,
   "class_names": [
     "copter_drone",

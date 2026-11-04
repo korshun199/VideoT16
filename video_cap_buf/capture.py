@@ -17,6 +17,7 @@ from typing import Any, Callable
 import cv2
 
 from detector import Detection, OnnxRuntimeDetector, OpenCVDnnDetector
+from air_filter import AirFilter
 
 
 PROGRAM_DIR = Path(__file__).resolve().parent
@@ -498,6 +499,8 @@ def validate_settings(settings: dict[str, Any]) -> None:
         raise ValueError("presence_confidence_percent не может быть выше confidence_percent")
     if settings.get("recognition_frame_policy", "all") not in ("all", "latest"):
         raise ValueError("recognition_frame_policy: допустимы all или latest")
+    if settings.get("air_osd_filter", "off") not in ("on", "off"):
+        raise ValueError("air_osd_filter: допустимы on или off")
     box_hold_ms = settings.get("display_box_hold_ms", 250)
     if (isinstance(box_hold_ms, bool) or not isinstance(box_hold_ms, int)
             or not 0 <= box_hold_ms <= 2000):
@@ -557,6 +560,7 @@ class PipelineSession:
     ) -> None:
         """Создаёт буферы и сигналы; длительность задаётся только CLI-параметром."""
         self.settings = settings
+        self.air_filter = AirFilter() if settings.get("air_osd_filter", "off") == "on" else None
         self.recognition_frame_policy = settings.get("recognition_frame_policy", "all")
         self.capture_log = capture_log
         self.recognition_log = recognition_log
@@ -862,6 +866,23 @@ class PipelineSession:
                 else:
                     detections, inference_ms = detector.detect(frame.image)
                     presence_candidates = detections
+                air_suppressed = ()
+                air_score = 0.0
+                air_filter_ms = 0.0
+                if self.air_filter is not None:
+                    air_started_ns = time.monotonic_ns()
+                    try:
+                        filtered_presence, removed_candidates, matched_score = self.air_filter.filter(
+                            frame.image, presence_candidates
+                        )
+                        # В обе группы попадают одни и те же объекты Detection.
+                        filtered_detections = tuple(item for item in detections if item not in removed_candidates)
+                        presence_candidates, detections = filtered_presence, filtered_detections
+                        air_suppressed, air_score = removed_candidates, matched_score
+                    except Exception as error:
+                        # При ошибке не теряем настоящее обнаружение из-за фильтра.
+                        self.recognition_log.write("air_filter_error", frame=frame.number, message=str(error))
+                    air_filter_ms = (time.monotonic_ns() - air_started_ns) / 1_000_000
                 recognized_ns = time.monotonic_ns()
                 result = DisplayResult(
                     number=frame.number,
@@ -930,6 +951,13 @@ class PipelineSession:
                         (inference_started_ns - frame.captured_ns) / 1_000_000, 3
                     ),
                     inference_ms=round(inference_ms, 3),
+                    air_filter_ms=round(air_filter_ms, 3),
+                    air_match_score=round(air_score, 4),
+                    air_suppressed=[
+                        {"label": item.label, "confidence": round(item.confidence, 6),
+                         "box": [item.left, item.top, item.right, item.bottom]}
+                        for item in air_suppressed
+                    ],
                     model_presence_candidate=bool(presence_candidates),
                     presence_max_confidence=round(
                         max((item.confidence for item in presence_candidates), default=0.0), 6
@@ -1155,6 +1183,7 @@ def main(argv: list[str] | None = None) -> int:
         f"рамка от {settings['confidence_percent']:g}%.",
         flush=True,
     )
+    print(f"Фильтр надписи AIR: {settings.get('air_osd_filter', 'off')}", flush=True)
     if args.duration is None:
         print("Длительность захвата: без ограничения (остановка Esc или Ctrl+C)", flush=True)
     else:
