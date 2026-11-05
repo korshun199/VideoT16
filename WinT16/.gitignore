@@ -1,0 +1,18 @@
+# Локальные результаты сборки Windows и временные журналы.
+.venv-build/
+build/
+dist/
+tmp/
+__pycache__/
+*.pyc
+# Активация, ключи и их резервные копии относятся к конкретному компьютеру.
+auth.dat
+auth.previous.*
+auth.incoming.*
+init.dat
+init.previous.*
+device.key
+device.key.unusable.*
+owner_keys/
+*.v16m
+build.local.json

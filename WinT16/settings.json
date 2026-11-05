@@ -1,0 +1,56 @@
+{
+  "application_version": "2.0",
+  "source": "auto_hdmi",
+  "hdmi_device_name_contains": [
+    "hdmi",
+    "capture",
+    "ultrasemi",
+    "usb video",
+    "usb2 video"
+  ],
+  "hdmi_device_vid": null,
+  "hdmi_device_pid": null,
+  "device_poll_interval_seconds": 2,
+  "width": 1280,
+  "height": 720,
+  "fps": 30,
+  "pixel_format": "YUYV",
+  "buffer_max_mb": 256,
+  "model_path": "models/anti_uav_fast_320_int8_pc-v2.v16m",
+  "inference_size": 320,
+  "inference_backend": "onnxruntime",
+  "recognition_workers": 1,
+  "inference_threads_per_worker": 4,
+  "recognition_frame_policy": "latest",
+  "confidence_percent": 50.0,
+  "presence_confidence_percent": 5.0,
+  "air_osd_filter": "on",
+  "nms_iou_threshold": 0.45,
+  "class_names": [
+    "copter_drone",
+    "motor_drone"
+  ],
+  "result_buffer_max_items": 10000,
+  "box_color_bgr": [
+    0,
+    255,
+    0
+  ],
+  "text_color_bgr": [
+    0,
+    255,
+    0
+  ],
+  "weak_candidate_color_bgr": [
+    255,
+    0,
+    255
+  ],
+  "box_thickness": 2,
+  "font_scale": 0.6,
+  "display_box_hold_ms": 250,
+  "display_match_iou_threshold": 0.1,
+  "display_delay_ms": 600,
+  "display_buffer_max_mb": 256,
+  "display_scale_mode": "fit"
+}
