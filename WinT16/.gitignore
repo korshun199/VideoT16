@@ -14,5 +14,6 @@ init.previous.*
 device.key
 device.key.unusable.*
 owner_keys/
+runtime/_embedded_model_key.py
 *.v16m
 build.local.json

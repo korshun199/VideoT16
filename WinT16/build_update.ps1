@@ -2,6 +2,9 @@
 param([string]$BuildPython = "", [string]$Version = "")
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+if (-not (Test-Path (Join-Path $Root "runtime\_embedded_model_key.py") -PathType Leaf)) {
+    throw "В исходниках обновления отсутствует секретный ключевой модуль сборки."
+}
 if (-not $BuildPython) {
     $BuildVenv = Join-Path (Split-Path -Parent $Root) ".venv-build"
     $BuildPython = Join-Path $BuildVenv "Scripts\python.exe"

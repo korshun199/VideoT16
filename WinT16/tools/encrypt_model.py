@@ -40,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
                         default=DEFAULT_KEYS_DIR / "model_aes.key",
                         help="закрытый файл AES-ключа владельца (по умолчанию — локальный owner_keys)")
     parser.add_argument("--short-code", action="store_true",
-                        help="использовать ключ AES-128 для активации кодом из 32 символов")
+                        help="использовать общий AES-128 ключ для короткой активации v3")
     args = parser.parse_args(argv)
     try:
         if args.model.suffix.lower() != ".onnx":

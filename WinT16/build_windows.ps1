@@ -2,6 +2,10 @@
 param([string]$BuildPython = "")
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$EmbeddedKeyModule = Join-Path $ProjectRoot "runtime\_embedded_model_key.py"
+if (-not (Test-Path $EmbeddedKeyModule -PathType Leaf)) {
+    throw "Нет закрытого ключевого модуля сборки. Подготовьте его на Linux командой: python3 WinT16/tools/prepare_build_key.py"
+}
 if (-not $BuildPython) { $BuildPython = Join-Path $ProjectRoot ".venv-build\Scripts\python.exe" }
 if (-not (Test-Path $BuildPython -PathType Leaf)) {
     Write-Host "Создаю окружение сборки..."

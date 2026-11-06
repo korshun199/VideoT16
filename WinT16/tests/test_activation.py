@@ -14,6 +14,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from WinT16.runtime.activation import (
     ActivationError,
     DeviceIdentity,
+    _short_hardware_code,
+    _short_model_key,
     _load_or_create_device_key,
     accept_activation_code,
     accept_short_activation_code,
@@ -194,21 +196,28 @@ class ActivationFlowTests(unittest.TestCase):
         encrypted_model = encrypt_model_bytes(b"shared-model-onnx", self.model_key)
         self.assertEqual(decrypt_model_bytes(encrypted_model, authorized_key), b"shared-model-onnx")
 
-    def test_short_codes_are_exactly_32_characters_and_unlock_shared_model(self) -> None:
-        """Короткий запрос и ответ укладываются в 32 символа и открывают общий AES-128 файл."""
+    def test_phone_codes_are_12_characters_and_unlock_shared_model(self) -> None:
+        """Запрос и ответ по 12 символов активируют общий AES-128 контейнер."""
         from WinT16.runtime.activation import ensure_short_request
+        from unittest.mock import patch
 
         request_code = ensure_short_request(self.app, self.identity)
-        self.assertEqual(len(request_code), 32)
+        self.assertEqual(len(request_code), 12)
         self.assertTrue(request_code.isupper())
+        self.assertTrue(request_code.isalnum())
         self.assertEqual(ensure_short_request(self.app, self.identity), request_code)
         activation_code = issue_short_activation_code(request_code, self.model_key_path)
-        self.assertEqual(len(activation_code), 32)
+        self.assertEqual(len(activation_code), 12)
         self.assertTrue(activation_code.isupper())
-        accepted_key = accept_short_activation_code(self.app, self.identity, activation_code)
+        self.assertTrue(activation_code.isalnum())
+        model_key = _short_model_key(self.model_key)
+        accepted_key = accept_short_activation_code(
+            self.app, self.identity, activation_code, model_key
+        )
         self.assertEqual(len(accepted_key), 16)
         self.assertTrue((self.app / "auth.dat").is_file())
-        self.assertEqual(activation_key(self.app, self.identity), accepted_key)
+        with patch("WinT16.runtime.activation._embedded_model_key", return_value=model_key):
+            self.assertEqual(activation_key(self.app, self.identity), accepted_key)
         encrypted_model = encrypt_model_bytes(b"shared-model-onnx", accepted_key)
         self.assertEqual(decrypt_model_bytes(encrypted_model, accepted_key), b"shared-model-onnx")
 
@@ -219,13 +228,58 @@ class ActivationFlowTests(unittest.TestCase):
         request_code = ensure_short_request(self.app, self.identity)
         activation_code = issue_short_activation_code(request_code, self.model_key_path)
         other_pc = DeviceIdentity("b" * 64, self.identity.available_fields)
-        with self.assertRaisesRegex(ActivationError, "другого компьютера"):
-            accept_short_activation_code(self.app, other_pc, activation_code)
+        with self.assertRaisesRegex(ActivationError, "не подходит этому компьютеру"):
+            accept_short_activation_code(
+                self.app, other_pc, activation_code, _short_model_key(self.model_key)
+            )
 
-    def test_short_code_rejects_non_32_character_input(self) -> None:
-        """Проверяет понятное ограничение длины ручного ввода."""
-        with self.assertRaisesRegex(ActivationError, "ровно 32"):
-            accept_short_activation_code(self.app, self.identity, "A" * 31)
+    def test_phone_code_accepts_dictation_separators(self) -> None:
+        """Разрешает при диктовке разделители между группами из четырёх знаков."""
+        from WinT16.runtime.activation import ensure_short_request
+
+        request = ensure_short_request(self.app, self.identity)
+        response = issue_short_activation_code(request, self.model_key_path)
+        separated = "-".join(response[index:index + 4] for index in (0, 4, 8))
+        accepted = accept_short_activation_code(
+            self.app, self.identity, separated, _short_model_key(self.model_key)
+        )
+        self.assertEqual(accepted, _short_model_key(self.model_key))
+
+    def test_phone_code_rejects_wrong_length_and_tampering(self) -> None:
+        """Обрезанный или изменённый 12-значный ответ не создаёт auth.dat."""
+        from WinT16.runtime.activation import ensure_short_request
+
+        request = ensure_short_request(self.app, self.identity)
+        response = issue_short_activation_code(request, self.model_key_path)
+        with self.assertRaisesRegex(ActivationError, "ровно 12"):
+            accept_short_activation_code(
+                self.app, self.identity, "A" * 11, _short_model_key(self.model_key)
+            )
+        replacement = "0" if response[0] != "0" else "1"
+        with self.assertRaisesRegex(ActivationError, "не подходит"):
+            accept_short_activation_code(
+                self.app, self.identity, replacement + response[1:],
+                _short_model_key(self.model_key),
+            )
+        self.assertFalse((self.app / "auth.dat").exists())
+
+    def test_legacy_32_character_activation_still_works(self) -> None:
+        """Старые уже выданные ответы v2 остаются принимаемыми и читаемыми."""
+        legacy_request = _short_hardware_code(self.identity)
+        self.assertEqual(len(legacy_request), 32)
+        legacy_response = issue_short_activation_code(legacy_request, self.model_key_path)
+        accepted = accept_short_activation_code(self.app, self.identity, legacy_response)
+        self.assertEqual(accepted, _short_model_key(self.model_key))
+        self.assertEqual(activation_key(self.app, self.identity), accepted)
+
+    def test_private_build_module_embeds_the_same_model_key_used_by_owner(self) -> None:
+        """Сборочный модуль содержит производный AES-ключ, не меняя файл владельца."""
+        from WinT16.tools.prepare_build_key import build_key_module_source
+
+        source = build_key_module_source(self.model_key_path)
+        namespace: dict[str, object] = {}
+        exec(compile(source, "_embedded_model_key.py", "exec"), namespace)
+        self.assertEqual(namespace["MODEL_AES_KEY"], _short_model_key(self.model_key))
 
 
 if __name__ == "__main__":

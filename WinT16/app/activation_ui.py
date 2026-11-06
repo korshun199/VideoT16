@@ -5,13 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
-    QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
 )
@@ -42,10 +43,12 @@ def show_activation_request(
     layout = QVBoxLayout(dialog)
     layout.setContentsMargins(14, 12, 14, 12)
     layout.setSpacing(4)
+    code_font = QFont("Consolas", 27, QFont.Weight.Bold)
+    code_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 3.0)
 
     heading = QLabel(
-        "Нажмите «Скопировать код», отправьте одну строку владельцу VideoT16. "
-        "Ответ вставьте во второе поле и нажмите «Активировать»."
+        "Сообщите владельцу VideoT16 код из первого поля — можно продиктовать по телефону. "
+        "Ответ введите во второе поле и нажмите «Активировать»."
     )
     heading.setWordWrap(True)
     layout.addWidget(heading)
@@ -55,24 +58,21 @@ def show_activation_request(
     layout.addWidget(details)
 
     layout.addWidget(QLabel("1. Код этого компьютера — отправьте его владельцу:"))
-    request_box = QPlainTextEdit()
+    request_box = QLineEdit()
     request_box.setReadOnly(True)
-    request_box.setPlaceholderText("Код запроса появится здесь")
-    request_box.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-    request_box.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    request_box.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-    request_box.setFixedHeight(40)
-    request_box.setTextInteractionFlags(
-        Qt.TextInteractionFlag.TextSelectableByMouse
-        | Qt.TextInteractionFlag.TextSelectableByKeyboard
-    )
+    request_box.setPlaceholderText("12 знаков")
+    request_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    request_box.setFont(code_font)
+    request_box.setMaxLength(12)
+    request_box.setFixedHeight(68)
+    request_box.setStyleSheet("QLineEdit { padding: 4px; }")
     try:
         if identity is None:
             raise ActivationError("Не удалось определить оборудование этого компьютера.")
-        request_box.setPlainText(ensure_short_request(app_root, identity))
+        request_box.setText(ensure_short_request(app_root, identity))
     except (ActivationError, OSError) as error:
         details.setText(f"Состояние: {error}")
-        request_box.setPlainText("Код запроса не создан. Обратитесь к владельцу программы.")
+        request_box.clear()
     layout.addWidget(request_box)
 
     request_buttons = QHBoxLayout()
@@ -81,18 +81,19 @@ def show_activation_request(
     request_buttons.addStretch(1)
     layout.addLayout(request_buttons)
 
-    layout.addWidget(QLabel("2. Вставьте сюда ответный код из сообщения владельца:"))
-    response_box = QPlainTextEdit()
-    response_box.setPlaceholderText("Вставьте ответ из 32 заглавных символов")
-    response_box.setFixedHeight(40)
-    response_box.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-    response_box.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    response_box.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    layout.addWidget(QLabel("2. Введите ответный код владельца — можно вставить или набрать:"))
+    response_box = QLineEdit()
+    response_box.setPlaceholderText("12 заглавных букв/цифр; можно вставить с дефисами")
+    response_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    response_box.setFont(code_font)
+    response_box.setMaxLength(20)
+    response_box.setFixedHeight(68)
+    response_box.setStyleSheet("QLineEdit { padding: 4px; }")
     layout.addWidget(response_box)
 
     buttons = QHBoxLayout()
     activate_button = QPushButton("Активировать")
-    activate_button.setEnabled(identity is not None and len(request_box.toPlainText()) == 32)
+    activate_button.setEnabled(identity is not None and len(request_box.text()) == 12)
     close_button = QPushButton("Закрыть")
     buttons.addStretch(1)
     buttons.addWidget(activate_button)
@@ -101,19 +102,19 @@ def show_activation_request(
 
     def copy_request() -> None:
         """Копирует полный код запроса в системный буфер обмена."""
-        code = request_box.toPlainText().strip()
-        if len(code) != 32:
+        code = request_box.text().strip()
+        if len(code) != 12:
             QMessageBox.warning(dialog, "Запрос не готов", "Код этого компьютера ещё не создан.")
             return
         application.clipboard().setText(code)
         QMessageBox.information(dialog, "Скопировано", "Код запроса скопирован. Отправьте его владельцу.")
 
     def activate() -> None:
-        """Проверяет вставленный ответ и создаёт auth.dat после проверки подписи."""
+        """Проверяет вставленный ответный код и создаёт auth.dat после совпадения."""
         if identity is None:
             QMessageBox.critical(dialog, "Нет данных компьютера", "Перезапустите программу или обратитесь к владельцу.")
             return
-        code = response_box.toPlainText().strip()
+        code = response_box.text().strip()
         if not code:
             QMessageBox.information(dialog, "Нужен ответный код", "Вставьте код из сообщения владельца.")
             response_box.setFocus()
@@ -137,7 +138,16 @@ def show_activation_request(
         )
         dialog.accept()
 
+    def uppercase_response(text: str) -> None:
+        """Показывает ввод заглавными, не меняя позицию курсора пользователя."""
+        normalized = text.upper()
+        if normalized != text:
+            cursor = response_box.cursorPosition()
+            response_box.setText(normalized)
+            response_box.setCursorPosition(min(cursor, len(normalized)))
+
     copy_button.clicked.connect(copy_request)
     activate_button.clicked.connect(activate)
     close_button.clicked.connect(dialog.reject)
+    response_box.textEdited.connect(uppercase_response)
     return 0 if dialog.exec() == QDialog.DialogCode.Accepted else 2

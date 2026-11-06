@@ -40,6 +40,10 @@ RSA_LABEL = b"VideoT16 model key v1"
 SHORT_REQUEST_FORMAT = "VideoT16-request-v2"
 SHORT_AUTH_FORMAT = "VideoT16-auth-v2"
 SHORT_CODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+PHONE_REQUEST_FORMAT = "VideoT16-request-v3"
+PHONE_AUTH_FORMAT = "VideoT16-auth-v3"
+PHONE_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+PHONE_CODE_LENGTH = 12
 
 
 class ActivationError(RuntimeError):
@@ -466,6 +470,11 @@ def activation_key(
             return _verify_short_activation_code(
                 str(envelope.get("code", "")), identity
             )
+        if envelope.get("format") == PHONE_AUTH_FORMAT:
+            code = str(envelope.get("code", ""))
+            return _verify_phone_activation_code(
+                code, identity, _embedded_model_key()
+            )
         if envelope.get("format") == AUTH_FORMAT:
             raise ActivationError(
                 "Сохранена активация старого формата. Нужен новый короткий код для этого компьютера."
@@ -482,11 +491,58 @@ def _short_hardware_code(identity: DeviceIdentity) -> str:
     return base64.b32encode(raw).decode("ascii").rstrip("=")
 
 
+def _phone_code_from_digest(digest: bytes) -> str:
+    """Преобразует 60 случайных бит в 12 символов без путаемых букв."""
+    if len(digest) < 8:
+        raise ActivationError("Недостаточно данных для кода активации.")
+    number = int.from_bytes(digest[:8], "big") >> 4
+    characters: list[str] = []
+    for _ in range(PHONE_CODE_LENGTH):
+        number, remainder = divmod(number, len(PHONE_CODE_ALPHABET))
+        characters.append(PHONE_CODE_ALPHABET[remainder])
+    return "".join(reversed(characters))
+
+
+def _normalize_phone_code(code: str) -> str:
+    """Нормализует диктуемый код: убирает пробелы/дефисы и явные омонимы."""
+    normalized = "".join(code.split()).replace("-", "").upper()
+    # При диктовке буква O часто путается с нулём, а I/L — с единицей.
+    normalized = normalized.translate(str.maketrans({"O": "0", "I": "1", "L": "1"}))
+    if (len(normalized) != PHONE_CODE_LENGTH
+            or any(character not in PHONE_CODE_ALPHABET for character in normalized)):
+        raise ActivationError(
+            "Код должен содержать ровно 12 заглавных букв или цифр. "
+            "Для диктовки используются буквы без I, L, O."
+        )
+    return normalized
+
+
+def _phone_hardware_code(identity: DeviceIdentity) -> str:
+    """Стабильно кодирует 60 бит отпечатка оборудования в короткий запрос."""
+    digest = hashlib.sha256(
+        b"VideoT16 hardware request v3\0" + bytes.fromhex(identity.fingerprint)
+    ).digest()
+    return _phone_code_from_digest(digest)
+
+
+def _embedded_model_key() -> bytes:
+    """Загружает 128-битный ключ модели, добавляемый владельцем только при сборке."""
+    try:
+        from runtime._embedded_model_key import MODEL_AES_KEY
+    except (ImportError, AttributeError) as error:
+        raise ActivationError(
+            "В этой сборке не встроен ключ модели. Нужна сборка владельца VideoT16."
+        ) from error
+    if not isinstance(MODEL_AES_KEY, bytes) or len(MODEL_AES_KEY) != SHORT_MODEL_KEY_SIZE:
+        raise ActivationError("Встроенный ключ модели имеет неверный формат.")
+    return MODEL_AES_KEY
+
+
 def ensure_short_request(app_root: Path, identity: DeviceIdentity) -> str:
-    """Создаёт или переиспользует компактный init.dat-запрос этого компьютера."""
-    code = _short_hardware_code(identity)
+    """Создаёт или переиспользует 12-значный запрос этого компьютера."""
+    code = _phone_hardware_code(identity)
     path = app_root / REQUEST_FILE
-    record = {"format": SHORT_REQUEST_FORMAT, "code": code}
+    record = {"format": PHONE_REQUEST_FORMAT, "code": code}
     if path.is_file():
         try:
             if _read_json(path) == record:
@@ -523,7 +579,23 @@ def _short_model_key(owner_key: bytes) -> bytes:
 
 
 def issue_short_activation_code(request_code: str, model_key_path: Path) -> str:
-    """Выпускает 32-символьный ответ, привязанный к короткому запросу ПК."""
+    """Выпускает 12-символьный ответ; 32-символьные запросы остаются совместимы."""
+    compact_request = "".join(request_code.split()).replace("-", "").upper()
+    if len(compact_request) == PHONE_CODE_LENGTH:
+        request = _normalize_phone_code(compact_request)
+        try:
+            owner_key = model_key_path.read_bytes()
+        except OSError as error:
+            raise ActivationError(f"Не удалось прочитать ключ модели владельца: {error}") from error
+        model_key = _short_model_key(owner_key)
+        response = hmac.new(
+            model_key,
+            b"VideoT16 phone activation v3\0" + request.encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+        return _phone_code_from_digest(response)
+
+    # Старый выпуск оставлен, чтобы можно было повторно активировать v2-клиенты.
     hardware = _decode_short_code(request_code)
     try:
         owner_key = model_key_path.read_bytes()
@@ -549,12 +621,53 @@ def _verify_short_activation_code(code: str, identity: DeviceIdentity) -> bytes:
     return model_key
 
 
-def accept_short_activation_code(app_root: Path, identity: DeviceIdentity, code: str) -> bytes:
-    """Проверяет 32-символьный ответ и сохраняет auth.dat после успешной проверки."""
+def _verify_phone_activation_code(
+    code: str, identity: DeviceIdentity, model_key: bytes,
+) -> bytes:
+    """Сверяет 12-символьный ответ с компьютером и возвращает его ключ модели."""
+    if len(model_key) != SHORT_MODEL_KEY_SIZE:
+        raise ActivationError("Ключ модели для телефонной активации имеет неверную длину.")
+    normalized = _normalize_phone_code(code)
+    request = _phone_hardware_code(identity)
+    expected = _phone_code_from_digest(hmac.new(
+        model_key,
+        b"VideoT16 phone activation v3\0" + request.encode("ascii"),
+        hashlib.sha256,
+    ).digest())
+    if not hmac.compare_digest(normalized, expected):
+        raise ActivationError(
+            "Ответный код не подходит этому компьютеру или в нём допущена ошибка."
+        )
+    return model_key
+
+
+def accept_short_activation_code(
+    app_root: Path,
+    identity: DeviceIdentity,
+    code: str,
+    model_key: bytes | None = None,
+) -> bytes:
+    """Принимает 12-символьный ответ либо старый 32-символьный и сохраняет auth.dat."""
+    normalized = "".join(code.split()).upper()
+    if len(normalized) != 32:
+        normalized = _normalize_phone_code(normalized)
+        active_key = model_key if model_key is not None else _embedded_model_key()
+        key = _verify_phone_activation_code(normalized, identity, active_key)
+        record = {"format": PHONE_AUTH_FORMAT, "code": _normalize_phone_code(normalized)}
+        return _store_short_auth_record(app_root, record, key)
+
+    # Старые v2-коды и сохранённые активации продолжают работать без изменений.
     key = _verify_short_activation_code(code, identity)
     normalized = "".join(code.split()).upper()
-    path = app_root / AUTH_FILE
     record = {"format": SHORT_AUTH_FORMAT, "code": normalized}
+    return _store_short_auth_record(app_root, record, key)
+
+
+def _store_short_auth_record(
+    app_root: Path, record: dict[str, object], key: bytes,
+) -> bytes:
+    """Атомарно сохраняет проверенный auth.dat, не теряя предыдущую активацию."""
+    path = app_root / AUTH_FILE
     if path.is_file():
         try:
             if _read_json(path) == record:

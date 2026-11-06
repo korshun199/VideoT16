@@ -18,7 +18,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Код активации VideoT16 для отправки в мессенджере")
     parser.add_argument(
         "request", nargs="?",
-        help="32-символьный код запроса пользователя; без аргумента спросит интерактивно",
+        help="12-символьный код запроса пользователя; 32-символьный запрос старой версии тоже поддержан",
     )
     parser.add_argument("--keys-dir", type=Path, default=DEFAULT_KEYS_DIR,
                         help="закрытый каталог ключей владельца на Linux")
@@ -27,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         request = args.request
         if request is None:
-            request = input("Вставьте 32-символьный запрос пользователя: ").strip()
+            request = input("Вставьте 12-символьный запрос пользователя: ").strip()
         if not request:
             raise ActivationError("Пустой запрос активации.")
         response = issue_short_activation_code(request, folder / "model_aes.key")
@@ -36,7 +36,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print("Код активации для отправки пользователю:")
     print(response)
-    print("Ответ содержит 32 заглавных символа; пользователь вставляет его в окно активации.")
+    print(f"Ответ содержит {len(response)} заглавных букв/цифр; пользователь вводит его в окно активации.")
     return 0
 
 
