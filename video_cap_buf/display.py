@@ -221,6 +221,12 @@ class DisplayWorker(threading.Thread):
                     float(self.session.settings.get("display_match_iou_threshold", 0.1)),
                 )
                 overlay_result = self.overlay_result if anchors else None
+                if self.session.async_kcf is not None:
+                    tracked = self.session.async_kcf.take(frame.number)
+                    if tracked and not result_updates and not detections and not weak_candidates:
+                        overlay_result, weak_candidates = tracked
+                        overlay_mode = "experimental_kcf"
+                        anchors = (overlay_result.number,)
                 overlay_is_fresh = bool(detections or weak_candidates)
                 overlay_age_ns = (
                     frame.captured_ns - overlay_result.captured_ns

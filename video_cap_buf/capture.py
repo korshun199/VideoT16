@@ -501,6 +501,16 @@ def validate_settings(settings: dict[str, Any]) -> None:
         raise ValueError("recognition_frame_policy: допустимы all или latest")
     if settings.get("air_osd_filter", "off") not in ("on", "off"):
         raise ValueError("air_osd_filter: допустимы on или off")
+    experimental_kcf = settings.get("experimental_kcf", False)
+    if not isinstance(experimental_kcf, bool):
+        raise ValueError("experimental_kcf: требуется true или false")
+    if experimental_kcf:
+        library = settings.get("experimental_kcf_lib")
+        if not isinstance(library, str) or not Path(library).is_absolute():
+            raise ValueError("experimental_kcf_lib: укажите абсолютный путь к библиотеке")
+        age = settings.get("experimental_kcf_max_age_ms", 400)
+        if isinstance(age, bool) or not isinstance(age, int) or not 1 <= age <= 2000:
+            raise ValueError("experimental_kcf_max_age_ms: требуется целое число от 1 до 2000")
     box_hold_ms = settings.get("display_box_hold_ms", 250)
     if (isinstance(box_hold_ms, bool) or not isinstance(box_hold_ms, int)
             or not 0 <= box_hold_ms <= 2000):
@@ -582,6 +592,12 @@ class PipelineSession:
             settings.get("display_delay_ms", 0) * 1_000_000,
         )
         self.display_buffer = DisplayBuffer(settings["result_buffer_max_items"])
+        self.async_kcf = None
+        if settings.get("experimental_kcf", False):
+            from observe_async import AsyncKcf
+            self.async_kcf = AsyncKcf(settings["experimental_kcf_lib"],
+                                      settings.get("experimental_kcf_max_age_ms", 400),
+                                      recognition_log)
         self.stop_requested = threading.Event()
         self.processing_finished = threading.Event()
         self.pair_condition = threading.Condition()
@@ -618,6 +634,8 @@ class PipelineSession:
 
     def start(self) -> None:
         """Сначала запускает потребителя, затем начинает получать новые кадры."""
+        if self.async_kcf is not None:
+            self.async_kcf.start()
         self.recognition_log.write(
             "recognition_started",
             started_ns=time.monotonic_ns(),
@@ -729,6 +747,8 @@ class PipelineSession:
                     break
                 self.frame_count = number
                 preview_dropped = self.preview_buffer.publish(frame)
+                if self.async_kcf is not None:
+                    self.async_kcf.submit_frame(frame)
                 if preview_dropped:
                     self.capture_log.write(
                         "display_buffer_overflow", frame=number, dropped=preview_dropped
@@ -936,6 +956,8 @@ class PipelineSession:
                     self.frame_buffer.remove(frame.number)
                     del frame, result, detections, presence_candidates
                     continue
+                if self.async_kcf is not None:
+                    self.async_kcf.submit_result(result)
                 with self.pair_condition:
                     self.pair_condition.notify_all()
                 result_count, estimated_bytes = self.display_buffer.stats()
@@ -1055,6 +1077,8 @@ class PipelineSession:
         for thread in self.recognition_threads:
             if thread.is_alive():
                 thread.join()
+        if self.async_kcf is not None and not self.async_kcf.close():
+            self.recognition_log.write("experimental_kcf_stop_timeout")
         self.frame_buffer.clear()
         self.preview_buffer.clear()
         self.display_buffer.clear()
@@ -1147,6 +1171,14 @@ def main(argv: list[str] | None = None) -> int:
             input_size=settings["inference_size"],
             classes=settings["class_names"],
         )
+        session = PipelineSession(
+            settings,
+            capture_log,
+            recognition_log,
+            detectors,
+            debug_frames=args.debug_frames,
+            duration_seconds=args.duration,
+        )
     except Exception as error:
         print(f"Ошибка подготовки: {error}", file=sys.stderr)
         if recognition_log is not None:
@@ -1158,14 +1190,6 @@ def main(argv: list[str] | None = None) -> int:
             display_log.close()
         return 1
 
-    session = PipelineSession(
-        settings,
-        capture_log,
-        recognition_log,
-        detectors,
-        debug_frames=args.debug_frames,
-        duration_seconds=args.duration,
-    )
     print(f"Журнал захвата: {capture_log.path}", flush=True)
     print(f"Журнал распознавания: {recognition_log.path}", flush=True)
     print(f"Журнал отображения: {display_log.path}", flush=True)

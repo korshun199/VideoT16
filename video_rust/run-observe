@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Локальный запуск отдельного наблюдательного эксперимента без правки настроек.
+set -Eeuo pipefail
+
+experiment_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+worktree_dir="$(dirname "$experiment_dir")"
+project_dir="/home/work/VideoT16"
+profile="$project_dir/tmp/video_cap_buf/landscape-round2-20261118/landscape_kcf_300_20261122.json"
+runtime="$project_dir/tmp/video_rust_tools"
+python="$project_dir/.venv/bin/python3"
+
+for required in "$profile" "$runtime/libvideot16_observe.so" "$worktree_dir/video_cap_buf/capture.py" "$python"; do
+    if [[ ! -f "$required" ]]; then
+        printf 'Ошибка: не найден файл %s\n' "$required" >&2
+        exit 1
+    fi
+done
+export OPENCV_FOR_THREADS_NUM=1
+export LD_LIBRARY_PATH="$runtime:$runtime/root/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+if [[ "${1:-}" == '--check' ]]; then
+    # Проверка не открывает камеру и не создаёт журналов захвата.
+    exec "$python" -c 'import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from capture import load_settings, _make_detectors; from observe_kcf import KcfOverlay; p=Path(sys.argv[2]); s=load_settings(p); t=KcfOverlay(s["experimental_kcf_lib"],s["experimental_kcf_max_age_ms"]); t.reset(); _make_detectors(s,p); print("Готово: настройки, модель и библиотека доступны; видеовход не открывался.")' "$worktree_dir/video_cap_buf" "$profile"
+fi
+
+printf 'Эксперимент: модель 480 INT8, буфер показа 300 мс, Rust KCF; выход Esc или Ctrl+C.\n'
+printf 'Прежние настройки не изменяются; фиолетовая рамка KCF не является подтверждением модели.\n'
+exec "$python" "$worktree_dir/video_cap_buf/capture.py" --settings "$profile" "$@"
